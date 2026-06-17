@@ -26,6 +26,15 @@
   <a href="README.en.md">English</a> | 中文 | <a href="README.ja.md">日本語</a>
 </p>
 
+> ⚠️ **Fork 说明**
+>
+> 本仓库是 [Narcooo/inkos](https://github.com/Narcooo/inkos) 的改进版本，包含以下优化：
+> - 修复了 TypeScript 类型错误
+> - 新增健康检查、伏笔管理等命令
+> - 完善了文档和部署配置
+>
+> 原始项目请访问：**https://github.com/Narcooo/inkos**
+
 ---
 
 InkOS 是一个面向故事创作的 AI Agent 系统：长篇连载、独立短篇、剧本剧作、同人番外、仿写续写和开放世界互动，都可以从同一个工作台开始。支持Studio、TUI、CLI交互形式，共享创意、设定、角色、记忆、审稿、修订、封面和互动状态只智能体，让故事能持续生产、持续修改、持续玩下去。
