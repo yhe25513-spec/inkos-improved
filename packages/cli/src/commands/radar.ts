@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { PipelineRunner } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 import { writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -50,11 +51,6 @@ radarCommand
         log(`Radar result saved to radar/scan-${timestamp}.json`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Radar scan failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "radar scan" });
     }
   });

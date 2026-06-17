@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { StateManager, writeExportArtifact } from "@actalk/inkos-core";
 import { join } from "node:path";
 import { findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const exportCommand = new Command("export")
   .description("Export book chapters to a single file")
@@ -35,11 +36,6 @@ export const exportCommand = new Command("export")
         log(`Output: ${result.outputPath}`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to export: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "export" });
     }
   });

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { PipelineRunner } from "@actalk/inkos-core";
 import { buildPipelineConfig, findProjectRoot, loadConfig, log, logError, resolveBookId, resolveContext } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const composeCommand = new Command("compose")
   .description("Compose chapter runtime artifacts");
@@ -40,11 +41,6 @@ composeCommand
         log(`  Trace: ${result.tracePath}`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to compose chapter: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "compose chapter" });
     }
   });

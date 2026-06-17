@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { findProjectRoot, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { access } from "node:fs/promises";

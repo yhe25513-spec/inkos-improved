@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { DEFAULT_REVISE_MODE, PipelineRunner, type ReviseMode } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const reviseCommand = new Command("revise")
   .description("Revise a chapter based on audit issues")
@@ -48,11 +49,6 @@ export const reviseCommand = new Command("revise")
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Revise failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "revise" });
     }
   });

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
 import { findProjectRoot, getLegacyMigrationHint, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const statusCommand = new Command("status")
   .description("Show project status")
@@ -128,11 +129,6 @@ export const statusCommand = new Command("status")
         log(JSON.stringify({ project: root, books: booksData }, null, 2));
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to get status: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "status" });
     }
   });

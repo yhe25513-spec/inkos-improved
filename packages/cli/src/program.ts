@@ -30,6 +30,9 @@ import { consolidateCommand } from "./commands/consolidate.js";
 import { createInteractCommand, type InteractCommandHooks } from "./commands/interact.js";
 import { createTuiCommand } from "./commands/tui.js";
 import { launchTui } from "./tui/app.js";
+import { quickCommand } from "./commands/quick.js";
+import { hooksCommand } from "./commands/hooks.js";
+import { healthCommand } from "./commands/health.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
@@ -91,6 +94,9 @@ export function createProgram(hooks: ProgramHooks = {}): Command {
     readInput: hooks.readInteractionInput,
   }));
   program.addCommand(createTuiCommand({ launchTui: hooks.launchTui }));
+  program.addCommand(quickCommand);
+  program.addCommand(hooksCommand);
+  program.addCommand(healthCommand);
 
   return program;
 }

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { StateManager, formatLengthCount, readGenreProfile, resolveLengthCountingMode } from "@actalk/inkos-core";
 import { findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const reviewCommand = new Command("review")
   .description("Review and approve chapters");
@@ -71,12 +72,7 @@ reviewCommand
         log("No chapters pending review.");
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to list reviews: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "review list" });
     }
   });
 
@@ -135,12 +131,7 @@ reviewCommand
         log(`Chapter ${chapterNum} approved (state committed).`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to approve: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "review approve" });
     }
   });
 
@@ -175,12 +166,7 @@ reviewCommand
         log(`${count} chapter(s) approved.`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to approve: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "review approve-all" });
     }
   });
 
@@ -243,11 +229,6 @@ reviewCommand
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to reject: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "review reject" });
     }
   });

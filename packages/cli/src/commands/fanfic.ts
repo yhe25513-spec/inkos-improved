@@ -3,6 +3,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { join, resolve, basename } from "node:path";
 import { deriveBookIdFromTitle, normalizePlatformOrOther, PipelineRunner, type BookConfig, type FanficMode } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const fanficCommand = new Command("fanfic")
   .description("Fan fiction writing tools (同人创作)");
@@ -80,12 +81,7 @@ fanficCommand
         log(`Next: inkos write next ${bookId}`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to create fanfic: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "fanfic init" });
     }
   });
 
@@ -117,12 +113,7 @@ fanficCommand
         log(canon);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(String(e));
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "fanfic show" });
     }
   });
 
@@ -157,12 +148,7 @@ fanficCommand
         log(`Canon refreshed from "${sourceName}".`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to refresh canon: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "fanfic refresh" });
     }
   });
 

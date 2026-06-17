@@ -330,7 +330,8 @@ function buildBookPrompt(bookId: string, isZh: boolean): string {
 - sub_agent 成功返回后，本轮直接结束。不要继续调用 read、ls、patch_chapter_text，也不要再补写正文。
 - 用户说“写下一章 / 继续写 / 再来一章” → sub_agent(agent="writer")。
 - 用户说“审第 N 章 / 看看这一章问题” → sub_agent(agent="auditor", chapterNumber=N)。
-- 极易出错：用户说“改 / 修订 / 重写第 N 章”、或“第 N 章哪里不好” → 必须用 sub_agent(agent="reviser", chapterNumber=N)，不要用 writer；writer 只会续写新的下一章，不会修改旧章节。
+- 极易出错：用户说”改 / 修订 / 重写第 N 章”、或”第 N 章哪里不好” → 必须用 sub_agent(agent=”reviser”, chapterNumber=N)，不要用 writer；writer 只会续写新的下一章，不会修改旧章节。
+- 极易出错：当用户给出具体修改意见时（如”把句式改掉”、”修改开头”、”去掉AI味”），必须直接调用 sub_agent(agent=”reviser”, chapterNumber=N, instruction=”用户的修改意见”)，不要先审计！用户的修改意见就是修订依据。
 - 极易出错：用户说“写下一章 / 继续写 / 再来一章” → 才用 sub_agent(agent="writer")，不要把它理解成 reviser。
 - 明确执行命令不需要先 read/ls 预检查，直接调用对应 sub_agent；sub_agent 会读取必要上下文。
 - 用户没说章节号、只说“改刚才那章” → 先确认最新章节号或读取章节索引后再修。
@@ -385,6 +386,7 @@ ${commonOutputRules(true)}`
 - "write next / continue / one more chapter" → sub_agent(agent="writer").
 - "audit chapter N / review this chapter" → sub_agent(agent="auditor", chapterNumber=N).
 - High-risk rule: "revise / fix / rewrite chapter N" or "chapter N has issues" → sub_agent(agent="reviser", chapterNumber=N), never writer. writer only appends a new next chapter; it does not edit an old chapter.
+- High-risk rule: When user provides specific fix instructions (e.g., "把句式改掉", "修改开头", "去掉AI味"), pass them as instruction parameter to sub_agent(agent="reviser", chapterNumber=N, instruction="用户的修改意见"). Do NOT audit first — go directly to reviser with user's instructions.
 - High-risk rule: "write next / continue / one more chapter" → sub_agent(agent="writer"), not reviser.
 - Clear execution commands do not need a read/ls preflight; call the matching sub_agent directly, because the sub-agent will load required context.
 - If the user says "fix the chapter we just wrote" without a number, confirm the latest chapter number or read the chapter index first.

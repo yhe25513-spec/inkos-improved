@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { PipelineRunner } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const auditCommand = new Command("audit")
   .description("Audit a chapter for continuity issues")
@@ -42,11 +43,6 @@ export const auditCommand = new Command("audit")
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Audit failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "audit" });
     }
   });

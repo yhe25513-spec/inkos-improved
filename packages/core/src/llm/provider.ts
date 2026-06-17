@@ -14,6 +14,19 @@ import { getEndpoint } from "./providers/index.js";
 import { lookupModel } from "./providers/lookup.js";
 import { fetchWithProxy } from "../utils/proxy-fetch.js";
 import { isApiKeyOptionalForEndpoint } from "../utils/llm-endpoint-auth.js";
+import {
+  LLMConnectionError,
+  LLMAuthError,
+  LLMForbiddenError,
+  LLMRateLimitError,
+  LLMBadRequestError,
+  LLMUpstreamError,
+} from "../errors/llm-errors.js";
+
+// 从 package.json 读取版本号
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const { version: INKOS_VERSION } = require("../../package.json");
 
 
 // === Streaming Monitor Types ===
@@ -27,7 +40,7 @@ export interface StreamProgress {
 
 export type OnStreamProgress = (progress: StreamProgress) => void;
 
-const INKOS_USER_AGENT = "InkOS/1.3.5";
+const INKOS_USER_AGENT = `InkOS/${INKOS_VERSION}`;
 const UNKNOWN_MODEL_FALLBACK_MAX_TOKENS = 8192 * 3;
 const TRANSIENT_LLM_RETRIES = 2;
 
@@ -290,6 +303,16 @@ export class ContextWindowExceededError extends Error {
   }
 }
 
+// Re-export from errors module for backward compatibility
+export {
+  LLMConnectionError,
+  LLMAuthError,
+  LLMForbiddenError,
+  LLMRateLimitError,
+  LLMBadRequestError,
+  LLMUpstreamError,
+} from "../errors/llm-errors.js";
+
 /** Keys managed by the provider layer — prevent extra from overriding them. */
 const RESERVED_KEYS = new Set(["max_tokens", "temperature", "model", "messages", "stream"]);
 
@@ -433,48 +456,32 @@ export function assertWithinContextWindow(params: {
 
 function wrapLLMError(error: unknown, context?: { readonly baseUrl?: string; readonly model?: string; readonly service?: string }): Error {
   const msg = String(error);
-  const ctxLine = context
-    ? `\n  (baseUrl: ${context.baseUrl}, model: ${context.model})`
-    : "";
 
-  if (msg.includes("400")) {
-    // 抽上游 error body 的 message / reason / code（和下方 5xx 一致），让真实错因浮到用户面前
-    let detail = "";
+  // 提取上游 error body 的详情
+  function extractUpstreamDetail(): string {
     if (error && typeof error === "object") {
       const err = error as { error?: unknown; body?: unknown; message?: string };
       const bodyLike = err.error ?? err.body;
       if (bodyLike && typeof bodyLike === "object") {
         const b = bodyLike as { reason?: string; message?: string; code?: number | string; type?: string };
-        if (b.message) detail = b.type ? `${b.type}: ${b.message}` : b.message;
-        else if (b.reason) detail = b.reason;
+        if (b.message) return b.type ? `${b.type}: ${b.message}` : b.message;
+        if (b.reason) return `${b.reason}${b.message ? `: ${b.message}` : ""}`;
       }
     }
-    return new Error(
-      `API 返回 400（请求参数错误）。${detail ? `上游详情：${detail}。\n` : ""}` +
-      `常见原因：\n` +
-      `  1. temperature / max_tokens 超出模型约束（如 Moonshot kimi-k2.X 强制 temperature=1）\n` +
-      `  2. 模型名称不正确或未上架\n` +
-      `  3. 消息格式不兼容（部分服务不支持 system role 或 developer role）${ctxLine}`,
-    );
+    return "";
+  }
+
+  if (msg.includes("400")) {
+    return new LLMBadRequestError({ upstreamDetail: extractUpstreamDetail(), cause: error });
   }
   if (msg.includes("403")) {
-    return new Error(
-      `API 返回 403 (请求被拒绝)。可能原因：\n` +
-      `  1. API Key 无效或过期\n` +
-      `  2. API 提供方的内容审查拦截了请求（公益/免费 API 常见）\n` +
-      `  3. 账户余额不足\n` +
-      `  建议：用 inkos doctor 测试 API 连通性，或换一个不限制内容的 API 提供方${ctxLine}`,
-    );
+    return new LLMForbiddenError({ detail: extractUpstreamDetail(), cause: error });
   }
   if (msg.includes("401")) {
-    return new Error(
-      `API 返回 401 (未授权)。请检查 .env 中的 INKOS_LLM_API_KEY 是否正确。${ctxLine}`,
-    );
+    return new LLMAuthError({ detail: extractUpstreamDetail(), cause: error });
   }
   if (msg.includes("429")) {
-    return new Error(
-      `API 返回 429 (请求过多)。请稍后重试，或检查 API 配额。${ctxLine}`,
-    );
+    return new LLMRateLimitError({ cause: error });
   }
   if (
     msg.includes("Connection error")
@@ -487,34 +494,15 @@ function wrapLLMError(error: unknown, context?: { readonly baseUrl?: string; rea
     || msg.includes("ETIMEDOUT")
     || msg.includes("EPIPE")
   ) {
-    return new Error(
-      `无法连接到 API 服务。可能原因：\n` +
-      `  1. baseUrl 地址不正确（当前：${context?.baseUrl ?? "未知"}）\n` +
-      `  2. 网络不通或被防火墙拦截\n` +
-      `  3. API 服务暂时不可用\n` +
-      `  建议：检查 INKOS_LLM_BASE_URL 是否包含完整路径（如 /v1）`,
-    );
+    return new LLMConnectionError({ baseUrl: context?.baseUrl, cause: error });
   }
   // R4 Bug 2: 5xx "status code (no body)" — 尝试从 OpenAI SDK APIError 里抽 body 给用户看具体原因
-  // （如 PPIO 的 {"code":500,"reason":"MODEL_NOT_AVAILABLE","message":"model not available"}）
   if (msg.includes("status code") && msg.includes("no body")) {
-    let detail = "";
-    if (error && typeof error === "object") {
-      const err = error as { error?: unknown; body?: unknown; message?: string };
-      const bodyLike = err.error ?? err.body;
-      if (bodyLike && typeof bodyLike === "object") {
-        const b = bodyLike as { reason?: string; message?: string; code?: number | string };
-        if (b.reason) detail = `${b.reason}${b.message ? `: ${b.message}` : ""}`;
-        else if (b.message) detail = b.message;
-      }
-    }
-    return new Error(
-      `API 返回 5xx（上游服务异常）。${detail ? `上游详情：${detail}。` : ""}\n` +
-      `可能原因：\n` +
-      `  1. 模型在 /models 列表但 inference 未上架（如 PPIO 返回 MODEL_NOT_AVAILABLE）\n` +
-      `  2. 服务端临时故障，稍后重试\n` +
-      `  3. 当前 apikey 无权限调用该模型${ctxLine}`,
-    );
+    return new LLMUpstreamError({ upstreamDetail: extractUpstreamDetail(), cause: error });
+  }
+  // 通用 5xx
+  if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504")) {
+    return new LLMUpstreamError({ upstreamDetail: extractUpstreamDetail(), cause: error });
   }
   return error instanceof Error ? error : new Error(msg);
 }

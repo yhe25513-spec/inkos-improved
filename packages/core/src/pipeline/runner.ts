@@ -14,6 +14,10 @@ import { LengthNormalizerAgent } from "../agents/length-normalizer.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import { ContinuityAuditor } from "../agents/continuity.js";
 import { ReviserAgent, DEFAULT_REVISE_MODE, type ReviseMode } from "../agents/reviser.js";
+import { EditTracker } from "../learning/edit-tracker.js";
+import { PreferenceAnalyzer } from "../learning/preference-analyzer.js";
+import { UserProfileManager } from "../learning/user-profile.js";
+import { PromptEnhancer } from "../learning/prompt-enhancer.js";
 import { StateValidatorAgent, type ValidationResult, type ValidationWarning } from "../agents/state-validator.js";
 import { RadarAgent } from "../agents/radar.js";
 import type { RadarSource } from "../agents/radar-source.js";
@@ -1255,7 +1259,7 @@ export class PipelineRunner {
   }
 
   /** Revise the latest (or specified) chapter based on audit issues. */
-  async reviseDraft(bookId: string, chapterNumber?: number, mode: ReviseMode = DEFAULT_REVISE_MODE): Promise<ReviseResult> {
+  async reviseDraft(bookId: string, chapterNumber?: number, mode: ReviseMode = DEFAULT_REVISE_MODE, userInstruction?: string): Promise<ReviseResult> {
     const releaseLock = await this.state.acquireBookLock(bookId);
     try {
       const book = await this.state.loadBookConfig(bookId);
@@ -1277,9 +1281,8 @@ export class PipelineRunner {
         throw new Error(`Chapter ${targetChapter} not found in index`);
       }
 
-      // Re-audit to get structured issues (index only stores strings)
+      // 使用保存的审计问题，而不是重新审计
       const content = await this.readChapterContent(bookDir, targetChapter);
-      const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
       const { profile: gp } = await this.loadGenreProfile(book.genre);
       const language = book.language ?? gp.language;
       const countingMode = resolveLengthCountingMode(language);
@@ -1292,22 +1295,100 @@ export class PipelineRunner {
           this.config.externalContext,
           { reuseExistingIntentWhenContextMissing: true },
         );
-      const preRevision = await this.evaluateMergedAudit({
-        auditor,
-        book,
-        bookDir,
-        chapterContent: content,
-        chapterNumber: targetChapter,
-        language,
-        auditOptions: reviseControlInput
-          ? {
-              chapterIntent: reviseControlInput.plan.intentMarkdown,
-              chapterMemo: reviseControlInput.plan.memo,
-              contextPackage: reviseControlInput.composed.contextPackage,
-              ruleStack: reviseControlInput.composed.ruleStack,
-            }
-          : undefined,
-      });
+
+      // 从 index 中加载已保存的审计问题
+      const savedIssueStrings = chapterMeta.auditIssues ?? [];
+
+      // 如果有用户指令，直接使用用户指令作为修改需求（跳过审计）
+      let preRevision;
+      const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
+      if (userInstruction && userInstruction.trim().length > 0) {
+        this.logStage(stageLanguage, {
+          zh: `使用用户指令进行修订：${userInstruction.substring(0, 50)}...`,
+          en: `using user instruction for revision: ${userInstruction.substring(0, 50)}...`,
+        });
+        preRevision = {
+          auditResult: {
+            passed: false,
+            issues: [{
+              severity: "warning" as const,
+              category: "用户指令",
+              description: userInstruction,
+              suggestion: userInstruction,
+            }],
+            summary: `用户要求：${userInstruction}`,
+          },
+          blockingCount: 1,
+          aiTellCount: 0,
+          criticalCount: 1,
+          revisionBlockingIssues: [{
+            severity: "warning" as const,
+            category: "用户指令",
+            description: userInstruction,
+            suggestion: userInstruction,
+          }],
+        };
+      } else if (savedIssueStrings.length > 0) {
+        // 使用保存的审计结果（将字符串转换为 AuditIssue 格式）
+        this.logStage(stageLanguage, {
+          zh: `使用第${targetChapter}章已保存的审计问题（${savedIssueStrings.length}个）`,
+          en: `using saved audit issues for chapter ${targetChapter} (${savedIssueStrings.length} issues)`,
+        });
+
+        // 解析保存的问题字符串（格式：[severity] description）
+        const parsedIssues = savedIssueStrings.map(issueStr => {
+          // 匹配 [critical]、[warning]、[info]
+          const severityMatch = issueStr.match(/^\[(critical|warning|info)\]\s*(.*)/i);
+          const severity = (severityMatch?.[1]?.toLowerCase() ?? "warning") as "critical" | "warning" | "info";
+          const description = severityMatch?.[2]?.trim() ?? issueStr;
+
+          // 尝试从描述中提取类别（通常在冒号前）
+          const colonIndex = description.indexOf(":");
+          const category = colonIndex > 0 ? description.substring(0, colonIndex).trim() : "unknown";
+          const cleanDescription = colonIndex > 0 ? description.substring(colonIndex + 1).trim() : description;
+
+          return {
+            severity,
+            category,
+            description: cleanDescription,
+            suggestion: "根据审计建议修改",
+          };
+        });
+
+        preRevision = {
+          auditResult: {
+            passed: false,
+            issues: parsedIssues,
+            summary: `发现 ${parsedIssues.length} 个问题需要修复`,
+          },
+          blockingCount: parsedIssues.filter(i => i.severity === "critical").length,
+          aiTellCount: parsedIssues.filter(i => i.severity === "warning").length,
+          criticalCount: parsedIssues.filter(i => i.severity === "critical").length,
+          revisionBlockingIssues: parsedIssues.filter(i => i.severity === "critical") as any,
+        };
+      } else {
+        // 重新审计
+        this.logStage(stageLanguage, {
+          zh: `重新审计第${targetChapter}章`,
+          en: `re-auditing chapter ${targetChapter}`,
+        });
+        preRevision = await this.evaluateMergedAudit({
+          auditor,
+          book,
+          bookDir,
+          chapterContent: content,
+          chapterNumber: targetChapter,
+          language,
+          auditOptions: reviseControlInput
+            ? {
+                chapterIntent: reviseControlInput.plan.intentMarkdown,
+                chapterMemo: reviseControlInput.plan.memo,
+                contextPackage: reviseControlInput.composed.contextPackage,
+                ruleStack: reviseControlInput.composed.ruleStack,
+              }
+            : undefined,
+        });
+      }
 
       if (preRevision.blockingCount === 0 && preRevision.aiTellCount === 0) {
         return {
@@ -1411,26 +1492,27 @@ export class PipelineRunner {
         lengthWarning: lengthWarnings.length > 0,
       });
 
-      const improvedBlocking = effectivePostRevision.blockingCount < preRevision.blockingCount;
-      const improvedAITells = effectivePostRevision.aiTellCount < preRevision.aiTellCount;
-      const blockingDidNotWorsen = effectivePostRevision.blockingCount <= preRevision.blockingCount;
-      const criticalDidNotWorsen = effectivePostRevision.criticalCount <= preRevision.criticalCount;
-      const aiDidNotWorsen = effectivePostRevision.aiTellCount <= preRevision.aiTellCount;
-      const shouldApplyRevision = blockingDidNotWorsen
-        && criticalDidNotWorsen
-        && aiDidNotWorsen
-        && (improvedBlocking || improvedAITells);
+      // 检查修订是否有效（放宽条件，只要内容有变化就应用）
+      const contentChanged = normalizedRevision.content !== content;
+      const fixedIssues = reviseOutput.fixedIssues ?? [];
 
-      if (!shouldApplyRevision) {
+      // 如果有修复的问题或内容有变化，就应用修订
+      if (fixedIssues.length === 0 && !contentChanged) {
         return {
           chapterNumber: targetChapter,
           wordCount: revisionBaseCount,
           fixedIssues: [],
           applied: false,
           status: "unchanged",
-          skippedReason: "Manual revision did not improve merged audit or AI-tell metrics; kept original chapter.",
+          skippedReason: "修订未产生任何修改，跳过应用。",
         };
       }
+
+      // 记录修订结果
+      this.logStage(stageLanguage, {
+        zh: `修订完成：修复了 ${fixedIssues.length} 个问题，内容已更新`,
+        en: `revision complete: fixed ${fixedIssues.length} issues, content updated`,
+      });
       this.logLengthWarnings(lengthWarnings);
 
       // Save revised chapter file
@@ -1508,6 +1590,42 @@ export class PipelineRunner {
         wordCount: normalizedRevision.wordCount,
         fixedCount: reviseOutput.fixedIssues.length,
       });
+
+      // ── 用户偏好学习：记录本次编辑 ──
+      try {
+        const editTracker = new EditTracker();
+        const edit = editTracker.trackEdit({
+          userId: "default", // TODO: 从会话中获取用户ID
+          bookId,
+          chapterId: `${bookId}-ch${targetChapter}`,
+          originalText: content,
+          editedText: normalizedRevision.content,
+          editType: mode === "rewrite" ? "rewrite" : "polish",
+          context: {
+            sceneType: "narration",
+          },
+        });
+
+        // 分析偏好并更新用户画像
+        const bufferedEdits = editTracker.getBufferedEdits();
+        if (bufferedEdits.length >= 5) {
+          const analyzer = new PreferenceAnalyzer();
+          const preference = analyzer.analyze(bufferedEdits);
+
+          const profileManager = new UserProfileManager();
+          profileManager.updatePreference("default", bookId, preference);
+
+          this.logStage(stageLanguage, {
+            zh: `已更新用户偏好画像（样本数：${bufferedEdits.length}）`,
+            en: `updated user preference profile (samples: ${bufferedEdits.length})`,
+          });
+
+          editTracker.clearBuffer();
+        }
+      } catch (error) {
+        // 偏好学习失败不影响修订流程
+        console.warn("用户偏好学习失败:", error);
+      }
 
       return {
         chapterNumber: targetChapter,

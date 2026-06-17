@@ -3,6 +3,7 @@ import { writeFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { listAvailableGenres, readGenreProfile, getBuiltinGenresDir } from "@actalk/inkos-core";
 import { findProjectRoot, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const genreCommand = new Command("genre")
   .description("Manage genre profiles");
@@ -27,8 +28,7 @@ genreCommand
       }
       log(`\nTotal: ${genres.length} genre(s)`);
     } catch (e) {
-      logError(`Failed to list genres: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "genre list" });
     }
   });
 
@@ -61,8 +61,7 @@ genreCommand
         log(`\n--- Body ---\n${body}`);
       }
     } catch (e) {
-      logError(`Failed to show genre: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "genre show" });
     }
   });
 
@@ -116,8 +115,7 @@ auditDimensions: [1,2,3,6,7,8,9,10,13,14,15,16,17,18,19]
       log(`Created genre profile: ${filePath}`);
       log(`Edit the file to customize chapter types, fatigue words, rules, etc.`);
     } catch (e) {
-      logError(`Failed to create genre: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "genre create" });
     }
   });
 
@@ -154,7 +152,6 @@ genreCommand
       log(`Copied to: ${destPath}`);
       log(`This project-level copy will override the built-in profile.`);
     } catch (e) {
-      logError(`Failed to copy genre: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "genre copy" });
     }
   });

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { PipelineRunner, runAgentSession } from "@actalk/inkos-core";
 import { buildPipelineConfig, loadConfig, createClient, findProjectRoot, resolveBookId, resolveContext, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const agentCommand = new Command("agent")
   .description("Natural language agent mode (LLM orchestrates via tool-use)")
@@ -65,11 +66,6 @@ export const agentCommand = new Command("agent")
         log(result.responseText);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Agent failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "agent" });
     }
   });

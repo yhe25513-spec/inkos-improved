@@ -449,10 +449,10 @@ export function createInteractionToolsFromDeps(
       bookId,
       () => pipeline.writeNextChapter(bookId),
     ),
-    reviseDraft: (bookId, chapterNumber, mode) => withPipelineInteractionTelemetry(
+    reviseDraft: (bookId, chapterNumber, mode, userInstruction?) => withPipelineInteractionTelemetry(
       instrumentedPipeline,
       bookId,
-      () => pipeline.reviseDraft(bookId, chapterNumber, mode as ReviseMode),
+      () => pipeline.reviseDraft(bookId, chapterNumber, mode as ReviseMode, userInstruction),
     ),
     patchChapterText: async (bookId, chapterNumber, targetText, replacementText) => withBookMutationLock(state, bookId, async () => {
       const execution = await executeEditTransaction(

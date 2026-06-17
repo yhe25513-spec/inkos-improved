@@ -1,31 +1,96 @@
-node_modules/
-dist/
-.env
-.env.local
-.npmrc
-*.tgz
-.DS_Store
-coverage/
-.turbo/
-_notes/
-_tmp_*
-test-project/
-.venv*/
-.gstack/
-.worktrees/
-docs/*
-novel-to-comic-research.docx
-.pnpm-store/
-tmp/
-autoresearch/
-.playwright-cli/
-.superpowers/
-_*.md
+# ══════════════════════════════════════════════════════════════
+# InkOS .gitignore - 保护敏感信息和构建产物
+# ══════════════════════════════════════════════════════════════
 
-# 用户运行时数据（会话记录、书籍内容、项目密钥、提示词模板不属于项目代码）
+# ── 依赖 ──
+node_modules/
+.pnpm-store/
+
+# ── 构建产物 ──
+dist/
+build/
+*.tgz
+
+# ── 环境变量和敏感配置 ──
+.env
+.env.*
+!.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# ── API密钥和令牌 ──
+*.key
+*.pem
+*.cert
+*.crt
+secrets/
+credentials/
+**/secrets.json
+**/credentials.json
+
+# ── 数据库 ──
+*.db
+*.sqlite
+*.sqlite3
+prisma/*.db
+prisma/*.db-journal
+
+# ── 日志 ──
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ── 编辑器和IDE ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── 测试和覆盖率 ──
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+
+# ── 临时文件 ──
+tmp/
+temp/
+_tmp_*
+*.tmp
+*.bak
+
+# ── 用户运行时数据 ──
 .inkos/
 books/
 worlds/
 inkos.json
 prompt/
 CLAUDE.md
+
+# ── 项目特定 ──
+test-project/
+.venv*/
+.gstack/
+.worktrees/
+novel-to-comic-research.docx
+autoresearch/
+.playwright-cli/
+.superpowers/
+_*.md
+
+# ── Claude 会话数据 ──
+.claude/
+
+# ── Docker ──
+docker-compose.override.yml
+
+# ── 依赖锁定文件（可选，根据团队偏好） ──
+# pnpm-lock.yaml

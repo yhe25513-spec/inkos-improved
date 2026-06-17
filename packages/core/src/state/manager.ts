@@ -1,8 +1,21 @@
-import { readFile, writeFile, mkdir, readdir, rm, stat, unlink, open } from "node:fs/promises";
+import { readFile, writeFile, mkdir, readdir, rm, stat, unlink, open, access } from "node:fs/promises";
 import { join } from "node:path";
 import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
 import { bootstrapStructuredStateFromMarkdown, resolveDurableStoryProgress } from "./state-bootstrap.js";
+import { SnapshotMissingError, StateRestoreError } from "../errors/state-errors.js";
+
+/** Truth 文件列表 — snapshot 和 restore 共用，避免重复定义 */
+const TRUTH_FILES = [
+  "current_state.md", "particle_ledger.md", "pending_hooks.md",
+  "chapter_summaries.md", "subplot_board.md", "emotional_arcs.md", "character_matrix.md",
+] as const;
+
+/** 角色目录名 — 根据语言本地化 */
+const ROLE_DIR_NAMES = {
+  zh: { major: "主要角色", minor: "次要角色" },
+  en: { major: "major", minor: "minor" },
+} as const;
 
 export class StateManager {
   /** Books actively being written by this process — used for same-process stale lock detection. */
@@ -35,8 +48,9 @@ export class StateManager {
     const storyDir = join(bookDir, "story");
     const runtimeDir = join(storyDir, "runtime");
     const outlineDir = join(storyDir, "outline");
-    const rolesMajorDir = join(storyDir, "roles", "主要角色");
-    const rolesMinorDir = join(storyDir, "roles", "次要角色");
+    const dirNames = ROLE_DIR_NAMES[language];
+    const rolesMajorDir = join(storyDir, "roles", dirNames.major);
+    const rolesMinorDir = join(storyDir, "roles", dirNames.minor);
 
     await mkdir(storyDir, { recursive: true });
     await mkdir(runtimeDir, { recursive: true });
@@ -113,6 +127,14 @@ export class StateManager {
     } catch (e) {
       const code = (e as NodeJS.ErrnoException | undefined)?.code;
       if (code === "EEXIST") {
+        // Check if the lock file actually exists on disk
+        const lockExists = await access(lockPath).then(() => true).catch(() => false);
+        if (!lockExists) {
+          // Lock file doesn't exist on disk but open() failed with EEXIST
+          // This is a stale/phantom lock - retry acquisition
+          return this.acquireBookLock(bookId);
+        }
+
         const lockData = await readFile(lockPath, "utf-8").catch(() => "pid:unknown ts:unknown");
         const lockPid = this.extractLockPid(lockData);
         const isStale =
@@ -226,7 +248,8 @@ export class StateManager {
         }
       }
       return bookIds;
-    } catch {
+    } catch (e) {
+      console.warn(`[inkos] ⚠️ 无法读取 books 目录: ${e}`);
       return [];
     }
   }
@@ -256,7 +279,8 @@ export class StateManager {
         if (!match) continue;
         chapterNumbers.add(parseInt(match[1]!, 10));
       }
-    } catch {
+    } catch (e) {
+      console.warn(`[inkos] ⚠️ 无法读取章节目录 (${bookId}): ${e}`);
       return 0;
     }
 
@@ -268,7 +292,8 @@ export class StateManager {
     try {
       const raw = await readFile(indexPath, "utf-8");
       return JSON.parse(raw);
-    } catch {
+    } catch (e) {
+      console.warn(`[inkos] ⚠️ 章节索引读取失败 (${bookId}): ${e}`);
       return [];
     }
   }
@@ -302,17 +327,13 @@ export class StateManager {
     const snapshotDir = join(storyDir, "snapshots", String(chapterNumber));
     await mkdir(snapshotDir, { recursive: true });
 
-    const files = [
-      "current_state.md", "particle_ledger.md", "pending_hooks.md",
-      "chapter_summaries.md", "subplot_board.md", "emotional_arcs.md", "character_matrix.md",
-    ];
     await Promise.all(
-      files.map(async (f) => {
+      TRUTH_FILES.map(async (f) => {
         try {
           const content = await readFile(join(storyDir, f), "utf-8");
           await writeFile(join(snapshotDir, f), content, "utf-8");
         } catch {
-          // file doesn't exist yet
+          // file doesn't exist yet — expected for new books
         }
       }),
     );
@@ -331,7 +352,7 @@ export class StateManager {
         );
       }
     } catch {
-      // state directory missing — skip
+      // state directory missing — skip (expected for new books)
     }
   }
 
@@ -388,16 +409,12 @@ export class StateManager {
     const storyDir = join(this.bookDir(bookId), "story");
     const snapshotDir = join(storyDir, "snapshots", String(chapterNumber));
 
-    const files = [
-      "current_state.md", "particle_ledger.md", "pending_hooks.md",
-      "chapter_summaries.md", "subplot_board.md", "emotional_arcs.md", "character_matrix.md",
-    ];
     try {
       // current_state.md and pending_hooks.md are required;
       // particle_ledger.md is optional (numericalSystem=false genres don't have it)
       // the rest are optional (may not exist in older snapshots)
       const requiredFiles = ["current_state.md", "pending_hooks.md"];
-      const optionalFiles = files.filter((f) => !requiredFiles.includes(f));
+      const optionalFiles = TRUTH_FILES.filter((f) => !requiredFiles.includes(f));
 
       await Promise.all(
         requiredFiles.map(async (f) => {
@@ -459,7 +476,7 @@ export class StateManager {
   ): Promise<ReadonlyArray<number>> {
     const restored = await this.restoreState(bookId, targetChapter);
     if (!restored) {
-      throw new Error(`Cannot restore snapshot for chapter ${targetChapter} in "${bookId}"`);
+      throw new StateRestoreError({ bookId, chapter: targetChapter });
     }
 
     const bookDir = this.bookDir(bookId);
@@ -554,7 +571,11 @@ export class StateManager {
     try {
       await stat(path);
     } catch {
-      await writeFile(path, content, "utf-8");
+      try {
+        await writeFile(path, content, "utf-8");
+      } catch (e) {
+        console.warn(`[inkos] ⚠️ 写入文件失败 (${path}): ${e}`);
+      }
     }
   }
 }

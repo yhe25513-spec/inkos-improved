@@ -16,6 +16,7 @@ import {
   type ShortFictionReference,
 } from "@actalk/inkos-core";
 import { buildPipelineConfig, findProjectRoot, loadConfig, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export { extractResponsesImageBase64, resolveCoverApiKey } from "@actalk/inkos-core";
 
@@ -136,7 +137,7 @@ shortCommand
         log(formatCoverStatus(payload.coverImagePath, payload.coverError));
       }
     } catch (e) {
-      logCommandError("Short run failed", e, opts.json);
+      handleCLIError(e, { json: opts.json, command: "short run" });
     }
   });
 

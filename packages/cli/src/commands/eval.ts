@@ -4,6 +4,7 @@ import {
   evaluateBookQuality,
 } from "@actalk/inkos-core";
 import { findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const evalCommand = new Command("eval")
   .description("Evaluate writing quality for a book — outputs structured quality report")
@@ -49,11 +50,6 @@ export const evalCommand = new Command("eval")
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Eval failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "eval" });
     }
   });

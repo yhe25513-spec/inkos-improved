@@ -5,6 +5,9 @@ import type { LengthSpec } from "../models/length-governance.js";
 import { buildFanficCanonSection, buildCharacterVoiceProfiles, buildFanficModeInstructions } from "./fanfic-prompt-sections.js";
 import { buildEnglishCoreRules, buildEnglishAntiAIRules, buildEnglishCharacterMethod, buildEnglishPreWriteChecklist, buildEnglishGenreIntro } from "./en-prompt-sections.js";
 import { buildLengthSpec } from "../utils/length-metrics.js";
+import type { WritingPreference } from "../learning/types.js";
+import { PromptEnhancer } from "../learning/prompt-enhancer.js";
+import { UserProfileManager } from "../learning/user-profile.js";
 
 export interface FanficContext {
   readonly fanficCanon: string;
@@ -65,6 +68,7 @@ export function buildWriterSystemPrompt(
         fanficContext ? buildCharacterVoiceProfiles(fanficContext.fanficCanon) : "",
         fanficContext ? buildFanficModeInstructions(fanficContext.fanficMode, fanficContext.allowedDeviations) : "",
         // Pre-write checklist moved to style_guide.md (v10)
+        buildUserPreferenceGuide(book.id, "en"),
         outputSection,
       ]
     : [
@@ -89,11 +93,35 @@ export function buildWriterSystemPrompt(
         fanficContext ? buildFanficCanonSection(fanficContext.fanficCanon, fanficContext.fanficMode) : "",
         fanficContext ? buildCharacterVoiceProfiles(fanficContext.fanficCanon) : "",
         fanficContext ? buildFanficModeInstructions(fanficContext.fanficMode, fanficContext.allowedDeviations) : "",
+        // 用户偏好指南
+        buildUserPreferenceGuide(book.id, "zh"),
         // Pre-write checklist moved to style_guide.md (v10)
         outputSection,
       ];
 
   return sections.filter(Boolean).join("\n\n");
+}
+
+// ---------------------------------------------------------------------------
+// 用户偏好指南
+// ---------------------------------------------------------------------------
+
+function buildUserPreferenceGuide(bookId: string, language: "zh" | "en"): string {
+  try {
+    const profileManager = new UserProfileManager();
+    const preference = profileManager.getPreference("default", bookId);
+
+    if (!preference || preference.meta.sampleSize < 5) {
+      return ""; // 样本不足，不生成指南
+    }
+
+    const enhancer = new PromptEnhancer();
+    return language === "en"
+      ? `\n## Personal Writing Style (Learned from Your Edits)\n\n${enhancer.generateStyleGuide(preference)}`
+      : `\n## 个人写作风格（根据您的编辑习惯学习）\n\n${enhancer.generateStyleGuide(preference)}`;
+  } catch {
+    return ""; // 加载失败不影响写作
+  }
 }
 
 // ---------------------------------------------------------------------------

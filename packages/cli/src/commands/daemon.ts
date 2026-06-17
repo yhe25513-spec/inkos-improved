@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { Scheduler } from "@actalk/inkos-core";
 import { loadConfig, findProjectRoot, buildPipelineConfig, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 import { createWriteStream, type WriteStream } from "node:fs";
 import { writeFile, readFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -95,8 +96,7 @@ export const upCommand = new Command("up")
           // ignore
         }
       }
-      logError(`Failed to start daemon: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "up" });
     }
   });
 

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { loadConfig, buildPipelineConfig, findProjectRoot, getLegacyMigrationHint, resolveContext, resolveBookId, log, logError } from "../utils.js";
 import { formatWriteNextComplete, formatWriteNextProgress, formatWriteNextResultLines, resolveCliLanguage } from "../localization.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const writeCommand = new Command("write")
   .description("Write chapters");
@@ -76,12 +77,7 @@ writeCommand
         log(formatWriteNextComplete(language));
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to write chapter: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "write next" });
     }
   });
 
@@ -201,12 +197,7 @@ writeCommand
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to rewrite chapter: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "write rewrite" });
     }
   });
 
@@ -259,12 +250,7 @@ writeCommand
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to sync chapter artifacts: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "write sync" });
     }
   });
 
@@ -314,11 +300,6 @@ writeCommand
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to repair chapter state: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "write repair-state" });
     }
   });

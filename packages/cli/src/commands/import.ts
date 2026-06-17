@@ -3,6 +3,7 @@ import { PipelineRunner, StateManager, splitChapters } from "@actalk/inkos-core"
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 import {
   formatImportCanonComplete,
   formatImportCanonStart,
@@ -48,12 +49,7 @@ importCommand
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Canon import failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "import canon" });
     }
   });
 
@@ -148,11 +144,6 @@ importCommand
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Chapter import failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "import chapters" });
     }
   });

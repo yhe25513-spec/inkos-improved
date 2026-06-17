@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { findProjectRoot, log, logError, GLOBAL_CONFIG_DIR, GLOBAL_ENV_PATH } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 import { listModelsForService } from "@actalk/inkos-core";
 
 export const configCommand = new Command("config")
@@ -82,8 +83,7 @@ configCommand
       await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
       log(`Set ${key} = ${value}`);
     } catch (e) {
-      logError(`Failed to update config: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "config set" });
     }
   });
 
@@ -119,8 +119,7 @@ configCommand
       log(`Global config saved to ${GLOBAL_ENV_PATH}`);
       log("All projects will use this config unless overridden by project .env");
     } catch (e) {
-      logError(`Failed to set global config: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "config set-global" });
     }
   });
 
@@ -157,8 +156,7 @@ configCommand
       }
       log(JSON.stringify(config, null, 2));
     } catch (e) {
-      logError(`Failed to read config: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "config show" });
     }
   });
 
@@ -220,8 +218,7 @@ configCommand
       await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
       log(`Model override: ${agent} → ${model}${opts.baseUrl ? ` (${opts.baseUrl})` : ""}`);
     } catch (e) {
-      logError(`Failed to update config: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "config set-model" });
     }
   });
 
@@ -246,8 +243,7 @@ configCommand
       await writeFile(configPath, JSON.stringify(config, null, 2), "utf-8");
       log(`Removed model override for ${agent}. Will use default model.`);
     } catch (e) {
-      logError(`Failed to update config: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: false, command: "config remove-model" });
     }
   });
 
@@ -293,8 +289,7 @@ configCommand
         log(`Using default: ${usingDefault.join(", ")}`);
       }
     } catch (e) {
-      logError(`Failed to read config: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "config show-models" });
     }
   });
 

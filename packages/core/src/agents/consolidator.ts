@@ -7,6 +7,8 @@ import {
   renderHookSnapshot,
 } from "../utils/story-markdown.js";
 import type { StoredHook } from "../state/memory-db.js";
+import { EntityExtractor, type ExtractionResult } from "./entity-extractor.js";
+import { EntityDB } from "../state/entity-db.js";
 
 export interface ConsolidationResult {
   readonly volumeSummaries: string;
@@ -214,5 +216,55 @@ export class ConsolidatorAgent extends BaseAgent {
     }).filter((r) => r.chapter > 0);
 
     return { header, rows };
+  }
+
+  /**
+   * 从章节内容中提取实体并更新实体数据库
+   */
+  async extractAndUpdateEntities(
+    bookDir: string,
+    chapterContent: string,
+    chapterNumber: number
+  ): Promise<ExtractionResult> {
+    const extractor = new EntityExtractor(this.ctx);
+    const entityDB = new EntityDB(bookDir);
+
+    try {
+      // 提取实体
+      const result = await extractor.extractFromChapter(chapterContent, chapterNumber);
+
+      // 更新实体数据库
+      entityDB.applyDelta(result.delta, chapterNumber);
+
+      this.ctx.logger?.info(
+        `[entity-extract] 章节 ${chapterNumber}: ` +
+        `角色 ${result.delta.characters.length}, ` +
+        `关系 ${result.delta.relationships.length}, ` +
+        `场景 ${result.delta.scenes.length}, ` +
+        `组织 ${result.delta.organizations.length}, ` +
+        `物品 ${result.delta.items.length}, ` +
+        `概念 ${result.delta.concepts.length}`
+      );
+
+      return result;
+    } finally {
+      entityDB.close();
+    }
+  }
+
+  /**
+   * 获取实体数据库统计
+   */
+  getEntityStats(bookDir: string): {
+    totalEntities: number;
+    activeCharacters: number;
+    totalEdges: number;
+  } {
+    const entityDB = new EntityDB(bookDir);
+    try {
+      return entityDB.getStats();
+    } finally {
+      entityDB.close();
+    }
   }
 }

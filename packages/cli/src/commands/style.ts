@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { StateManager, analyzeStyle, PipelineRunner } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -36,8 +37,7 @@ styleCommand
         }
       }
     } catch (e) {
-      logError(`Analysis failed: ${e}`);
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "style analyze" });
     }
   });
 
@@ -89,11 +89,6 @@ styleCommand
         log(`Style imported to "${bookId}" from "${file}"`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Import failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "style import" });
     }
   });

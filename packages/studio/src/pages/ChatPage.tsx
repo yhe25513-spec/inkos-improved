@@ -19,6 +19,7 @@ import {
 } from "../components/ai-elements/reasoning";
 import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
+import { QuickCommands } from "../components/QuickCommands";
 import { ToolExecutionSteps, type ProposedActionDetails } from "../components/chat/ToolExecutionSteps";
 import { PlayHud } from "../components/chat/PlayHud";
 import { PlayChoicePanel } from "../components/chat/PlayChoicePanel";
@@ -645,6 +646,13 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
       {needsPlayModeChoice ? null : (
       <div className={`shrink-0 border-t border-border/40 px-4 py-3 transition-[padding] duration-200 ${worldPanelInsetClass}`}>
         <div className="max-w-3xl mx-auto">
+          {/* Quick Commands */}
+          {currentSessionKind === "book" && (
+            <QuickCommands
+              onCommand={handleQuickAction}
+              disabled={loading || !activeSessionId}
+            />
+          )}
           <div className="flex items-start gap-2">
             <div className="flex-1 rounded-xl bg-secondary/30 transition-all">
               <div className="flex items-center gap-2 px-3 py-2">

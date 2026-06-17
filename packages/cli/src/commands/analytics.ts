@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { StateManager, computeAnalytics } from "@actalk/inkos-core";
 import { loadConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const analyticsCommand = new Command("analytics")
   .alias("stats")
@@ -67,11 +68,6 @@ export const analyticsCommand = new Command("analytics")
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Analytics failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "analytics" });
     }
   });

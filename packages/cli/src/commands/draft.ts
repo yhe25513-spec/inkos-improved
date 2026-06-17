@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { PipelineRunner } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveContext, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const draftCommand = new Command("draft")
   .description("Write a draft chapter (no audit/revise)")
@@ -33,11 +34,6 @@ export const draftCommand = new Command("draft")
         log(`  File: ${result.filePath}`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to write draft: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "draft" });
     }
   });

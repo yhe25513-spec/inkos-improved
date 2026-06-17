@@ -28,6 +28,8 @@ import {
   readCharacterContext,
   readCurrentStateWithFallback,
 } from "../utils/outline-paths.js";
+import { DualDetector, type DualDetectorOptions } from "./dual-detector.js";
+import type { VoiceProfile } from "../utils/voice-profiles.js";
 
 export type ReviseMode = "auto" | "polish" | "rewrite" | "rework" | "anti-detect" | "spot-fix";
 
@@ -127,6 +129,7 @@ export class ReviserAgent extends BaseAgent {
       contextPackage?: ContextPackage;
       ruleStack?: RuleStack;
       lengthSpec?: LengthSpec;
+      voiceProfile?: VoiceProfile;
     },
   ): Promise<ReviseOutput> {
     const [currentState, ledger, hooks, styleGuideRaw, volumeOutline, storyBible, characterMatrix, chapterSummaries, parentCanon, fanficCanon] = await Promise.all([
@@ -297,10 +300,37 @@ ${chapterContent}`;
           updatedHooks: mergeTableMarkdownByKey(hooks, output.updatedHooks, [0]),
         }
       : output;
+
+    // 双轨 AI 检测：在 anti-detect 模式下，对修订后的文本进行二次检测和修复
+    let finalContent = mergedOutput.revisedContent;
+    if (mode === "anti-detect" && finalContent) {
+      try {
+        const dualDetector = new DualDetector(this.ctx);
+        const detectionReport = await dualDetector.detect(finalContent, {
+          voiceProfile: options?.voiceProfile as VoiceProfile | undefined,
+          enableSecondPass: true,
+          maxFixes: 30,
+        });
+
+        if (detectionReport.rewritten !== finalContent) {
+          // 如果双轨检测有修改，使用修改后的版本
+          finalContent = detectionReport.rewritten;
+          this.ctx.logger?.info(
+            `[dual-detect] 第一轮修复 ${detectionReport.firstPassIssues.length} 个问题，` +
+            `第二轮残留 ${detectionReport.secondPassIssues.length} 个问题，` +
+            `AI 检测分数: ${detectionReport.score}/100`
+          );
+        }
+      } catch (error) {
+        // 双轨检测失败不影响主流程
+        this.ctx.logger?.warn(`[dual-detect] 双轨检测失败: ${error}`);
+      }
+    }
+
     const wordCount = options?.lengthSpec
-      ? countChapterLength(mergedOutput.revisedContent, options.lengthSpec.countingMode)
-      : mergedOutput.wordCount;
-    return { ...mergedOutput, wordCount, tokenUsage: response.usage };
+      ? countChapterLength(finalContent, options.lengthSpec.countingMode)
+      : finalContent.length;
+    return { ...mergedOutput, revisedContent: finalContent, wordCount, tokenUsage: response.usage };
   }
 
   private parseOutput(

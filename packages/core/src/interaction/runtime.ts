@@ -48,7 +48,7 @@ export interface InteractionRuntimeTools {
     },
   ) => Promise<unknown>;
   readonly writeNextChapter: (bookId: string) => Promise<unknown>;
-  readonly reviseDraft: (bookId: string, chapterNumber: number, mode: ReviseMode) => Promise<unknown>;
+  readonly reviseDraft: (bookId: string, chapterNumber: number, mode: ReviseMode, userInstruction?: string) => Promise<unknown>;
   readonly patchChapterText: (
     bookId: string,
     chapterNumber: number,
@@ -646,7 +646,8 @@ export async function runInteractionRequest(params: {
         }));
       }
       const mode: ReviseMode = request.intent === "rewrite_chapter" ? "rewrite" : "local-fix";
-      const toolResult = await params.tools.reviseDraft(bookId, request.chapterNumber, mode);
+      const userInstruction = request.instruction ?? undefined;
+      const toolResult = await params.tools.reviseDraft(bookId, request.chapterNumber, mode, userInstruction);
       const metadata = extractToolMetadata(toolResult);
       const chapterNumber = metadata.activeChapterNumber ?? request.chapterNumber;
       session = bindActiveBook(session, bookId, chapterNumber);

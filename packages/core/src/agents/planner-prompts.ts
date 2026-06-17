@@ -309,6 +309,7 @@ export interface PlannerUserMessageInput {
   readonly brief?: string;
   readonly chapterContext?: string;
   readonly language?: "zh" | "en";
+  readonly hookPressureContext?: string;
 }
 
 export function buildPlannerUserMessage(input: PlannerUserMessageInput): string {
@@ -319,11 +320,13 @@ export function buildPlannerUserMessage(input: PlannerUserMessageInput): string 
 
   const briefBlock = buildBriefBlock(input.brief ?? "", language);
   const chapterContextBlock = buildChapterContextBlock(input.chapterContext ?? "", language);
+  const hookPressureBlock = buildHookPressureBlock(input.hookPressureContext ?? "", language);
 
   const filled = template
     .replaceAll("{{chapterNumber}}", String(input.chapterNumber))
     .replaceAll("{{brief_block}}", briefBlock)
     .replaceAll("{{chapter_context_block}}", chapterContextBlock)
+    .replaceAll("{{hook_pressure_block}}", hookPressureBlock)
     .replaceAll("{{previous_chapter_ending_excerpt}}", input.previousChapterEndingExcerpt)
     .replaceAll("{{recent_summaries}}", input.recentSummaries)
     .replaceAll("{{current_arc_prose}}", input.currentArcProse)
@@ -374,6 +377,21 @@ This is the user's direct instruction for the current chapter. The memo must obe
 ${trimmed}
 
 这是用户对当前章节的直接指令。memo 必须优先遵守它，再参考卷纲兜底。如果用户指定了章节标题，必须在 memo 中原样保留该标题，供写手作为 CHAPTER_TITLE 使用。若它与卷纲不完全一致，保持连续性，但以本章用户指令为准。`;
+}
+
+function buildHookPressureBlock(hookPressureContext: string, language: "zh" | "en"): string {
+  const trimmed = hookPressureContext.trim();
+  if (!trimmed) return "";
+  if (language === "en") {
+    return `## Hook Pressure Analysis (system-generated recommendations)
+${trimmed}
+
+The above hooks have been identified as needing attention based on their age, advancement history, and current story context. Consider incorporating these into your hook ledger decisions for this chapter. High-pressure hooks should be prioritized for advancement or resolution.`;
+  }
+  return `## 伏笔压力分析（系统生成的建议）
+${trimmed}
+
+以上伏笔根据其年龄、推进历史和当前故事上下文被识别为需要关注。请在本章的伏笔账本决策中考虑这些建议。高压力伏笔应优先推进或回收。`;
 }
 
 // ---------------------------------------------------------------------------

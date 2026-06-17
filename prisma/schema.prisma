@@ -1,0 +1,177 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── 书籍 ──────────────────────────────────────────────
+model Book {
+  id        String   @id @default(cuid())
+  title     String
+  genre     String   @default("general")
+  platform  String   @default("other") // qidian | tomato | jjwxc | amazon-kdp | other
+  language  String   @default("zh")
+  status    String   @default("outlining")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  chapters          Chapter[]
+  complianceReports ComplianceReport[]
+  foreshadows       Foreshadow[]
+  characterStates   CharacterState[]
+  timelineEvents    TimelineEvent[]
+  aiUsageLogs       AiUsageLog[]
+
+  @@index([platform])
+  @@index([createdAt])
+}
+
+// ── 章节 ──────────────────────────────────────────────
+model Chapter {
+  id           String   @id @default(cuid())
+  bookId       String
+  book         Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  number       Int
+  title        String?
+  content      String   @db.Text
+  wordCount    Int      @default(0)
+  aiPercentage Float?
+  hasAiLabel   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([bookId, number])
+  @@index([bookId, number])
+}
+
+// ── 合规报告 ──────────────────────────────────────────
+model ComplianceReport {
+  id             String   @id @default(cuid())
+  bookId         String
+  book           Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  platform       String
+  score          Int      // 0-100
+  aiPercentage   Float
+  passed         Boolean
+  issues         Json     // ComplianceIssue[]
+  recommendations String[]
+  detectorResults Json?   // 多检测器交叉验证结果
+  createdAt      DateTime @default(now())
+
+  @@index([bookId, createdAt])
+  @@index([platform])
+}
+
+// ── 伏笔 ──────────────────────────────────────────────
+model Foreshadow {
+  id               String   @id @default(cuid())
+  bookId           String
+  book             Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  chapterSet       Int
+  content          String   @db.Text
+  status           String   @default("pending") // pending | resolved | abandoned
+  chapterResolved  Int?
+  importanceLevel  String   @default("medium") // critical | high | medium | low
+  importanceReason String?
+  relatedEntities  String[]
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([bookId, status])
+  @@index([bookId, chapterSet])
+  @@index([bookId, importanceLevel])
+}
+
+// ── 角色状态 ──────────────────────────────────────────
+model CharacterState {
+  id            String   @id @default(cuid())
+  bookId        String
+  book          Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  characterId   String
+  characterName String
+  chapterNumber Int
+  physicalState String   @default("")
+  mentalState   String   @default("")
+  relationships Json     @default("[]") // Relationship[]
+  inventory     Json     @default("[]") // Item[]
+  knowledge     String[]
+  secrets       String[]
+  goals         String[]
+  createdAt     DateTime @default(now())
+
+  @@index([bookId, characterId, chapterNumber])
+  @@index([bookId, chapterNumber])
+}
+
+// ── 时间线事件 ────────────────────────────────────────
+model TimelineEvent {
+  id            String   @id @default(cuid())
+  bookId        String
+  book          Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  chapterNumber Int
+  storyTime     String   // 故事内时间（如"第三天清晨"）
+  duration      String?
+  description   String   @db.Text
+  characters    String[]
+  location      String
+  type          String   @default("main") // main | side | flashback
+  createdAt     DateTime @default(now())
+
+  @@index([bookId, chapterNumber])
+  @@index([bookId, storyTime])
+}
+
+// ── AI 使用日志 ───────────────────────────────────────
+model AiUsageLog {
+  id           String   @id @default(cuid())
+  bookId       String?
+  sessionId    String
+  model        String
+  provider     String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  cost         Float    @default(0)
+  operation    String   // compliance-check | emotion-enhance | anti-ai | etc.
+  duration     Int      // ms
+  success      Boolean  @default(true)
+  errorMessage String?
+  createdAt    DateTime @default(now())
+
+  @@index([bookId, createdAt])
+  @@index([operation])
+}
+
+// ── 用户偏好 ──────────────────────────────────────────
+model UserPreference {
+  id              String   @id @default(cuid())
+  userId          String
+  bookId          String?  // null表示全局偏好
+  global          Json     // WritingPreference
+  learningHistory Json     // { totalEdits: number, milestones: [] }
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, bookId])
+  @@index([userId])
+}
+
+// ── 用户编辑记录 ──────────────────────────────────────
+model UserEdit {
+  id           String   @id @default(cuid())
+  userId       String
+  bookId       String
+  chapterId    String
+  originalText String   @db.Text
+  editedText   String   @db.Text
+  editType     String   // rewrite | rephrase | delete | add | merge | split | polish | tone-shift
+  context      Json?    // EditContext
+  createdAt    DateTime @default(now())
+
+  @@index([userId, bookId])
+  @@index([createdAt])
+  @@index([editType])
+}

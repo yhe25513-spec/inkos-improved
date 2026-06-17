@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { execSync } from "node:child_process";
 import { log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const updateCommand = new Command("update")
   .description("Update InkOS to the latest version")
@@ -38,8 +39,7 @@ export const updateCommand = new Command("update")
       execSync("npm install -g @actalk/inkos@latest", { stdio: "inherit" });
       log(`Updated to ${remoteVersion}.`);
     } catch (e) {
-      logError(`Update failed: ${e}`);
+      handleCLIError(e, { json: false, command: "update" });
       log("You can also update manually: npm install -g @actalk/inkos@latest");
-      process.exit(1);
     }
   });

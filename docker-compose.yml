@@ -1,0 +1,90 @@
+# ══════════════════════════════════════════════════════════════
+# InkOS Docker Compose 配置
+# ══════════════════════════════════════════════════════════════
+
+# 使用方法:
+# 开发环境: docker-compose up -d
+# 生产环境: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+version: "3.8"
+
+services:
+  # ── PostgreSQL 数据库 ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: inkos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-inkos}
+      POSTGRES_USER: ${POSTGRES_USER:-inkos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-inkos_dev_2026}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - inkos-pgdata:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inkos}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - inkos-network
+
+  # ── Redis 缓存 ──
+  redis:
+    image: redis:7-alpine
+    container_name: inkos-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - inkos-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - inkos-network
+
+  # ── InkOS 应用 ──
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: inkos-app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-inkos}:${POSTGRES_PASSWORD:-inkos_dev_2026}@postgres:5432/${POSTGRES_DB:-inkos}
+      - REDIS_URL=redis://redis:6379
+      - INKOS_LLM_API_KEY=${INKOS_LLM_API_KEY}
+      - INKOS_LLM_MODEL=${INKOS_LLM_MODEL:-gpt-4o}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - inkos-network
+
+volumes:
+  inkos-pgdata:
+    driver: local
+  inkos-redisdata:
+    driver: local
+
+networks:
+  inkos-network:
+    driver: bridge

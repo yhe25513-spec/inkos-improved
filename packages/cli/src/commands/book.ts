@@ -12,6 +12,7 @@ import {
   resolveCliLanguage,
 } from "../localization.js";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const bookCommand = new Command("book")
   .description("Manage books");
@@ -89,12 +90,7 @@ bookCommand
         log(formatBookCreateNextStep(language, bookId));
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to create book: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "book create" });
     }
   });
 
@@ -148,12 +144,7 @@ bookCommand
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to update book: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "book update" });
     }
   });
 
@@ -198,12 +189,7 @@ bookCommand
         log(JSON.stringify({ books }, null, 2));
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to list books: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "book list" });
     }
   });
 
@@ -250,11 +236,6 @@ bookCommand
         log(`Deleted "${book.title}" (${bookId}): ${index.length} chapter(s) removed.`);
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Failed to delete book: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "book delete" });
     }
   });

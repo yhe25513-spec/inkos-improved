@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { ConsolidatorAgent } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
+import { handleCLIError } from "../error-handler.js";
 
 export const consolidateCommand = new Command("consolidate")
   .description("Consolidate chapter summaries into volume-level summaries (reduces context for long books)")
@@ -40,11 +41,6 @@ export const consolidateCommand = new Command("consolidate")
         }
       }
     } catch (e) {
-      if (opts.json) {
-        log(JSON.stringify({ error: String(e) }));
-      } else {
-        logError(`Consolidation failed: ${e}`);
-      }
-      process.exit(1);
+      handleCLIError(e, { json: opts.json, command: "consolidate" });
     }
   });

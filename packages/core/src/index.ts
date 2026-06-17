@@ -1,3 +1,40 @@
+// Errors
+export {
+  InkOSError,
+  ErrorCode,
+  isLLMError,
+  isStateError,
+  isConfigError,
+  isInkOSError,
+} from "./errors/index.js";
+export {
+  LLMConnectionError,
+  LLMAuthError,
+  LLMForbiddenError,
+  LLMRateLimitError,
+  LLMBadRequestError,
+  LLMUpstreamError,
+  LLMContextWindowError,
+  LLMPartialResponseError,
+  LLMEmptyResponseError,
+} from "./errors/llm-errors.js";
+export {
+  StateCorruptedError,
+  BookLockError,
+  SnapshotMissingError,
+  ChapterNotFoundError,
+  BookNotFoundError,
+  StateRestoreError,
+} from "./errors/state-errors.js";
+export {
+  ProjectNotInitializedError,
+  InvalidConfigError,
+  MissingConfigError,
+  InvalidLLMConfigError,
+  UnsupportedLanguageError,
+  UnsupportedPlatformError,
+} from "./errors/config-errors.js";
+
 // Models
 export { type BookConfig, type Platform, type Genre, type BookStatus, type FanficMode, BookConfigSchema, PlatformSchema, GenreSchema, BookStatusSchema, FanficModeSchema, normalizePlatformId, normalizePlatformOrOther } from "./models/book.js";
 export { type ChapterMeta, type ChapterStatus, ChapterMetaSchema, ChapterStatusSchema } from "./models/chapter.js";
@@ -8,6 +45,7 @@ export { type BookRules, type ParsedBookRules, BookRulesSchema, parseBookRules, 
 export { type DetectionHistoryEntry, type DetectionStats } from "./models/detection.js";
 export { type StyleProfile } from "./models/style-profile.js";
 export { type LengthCountingMode, type LengthNormalizeMode, type LengthSpec, type LengthTelemetry, type LengthWarning, LengthCountingModeSchema, LengthNormalizeModeSchema, LengthSpecSchema, LengthTelemetrySchema, LengthWarningSchema } from "./models/length-governance.js";
+export { type EntityType, type Entity, type Edge, type EntityDelta, type StateChange, type RelationshipType } from "./models/entity.js";
 export {
   type RuntimeStateLanguage,
   type StateManifest,
@@ -403,6 +441,8 @@ export { parseSettlerDeltaOutput, type SettlerDeltaOutput } from "./agents/settl
 export { FanficCanonImporter, type FanficCanonOutput } from "./agents/fanfic-canon-importer.js";
 export { getFanficDimensionConfig, FANFIC_DIMENSIONS, type FanficDimensionConfig } from "./agents/fanfic-dimensions.js";
 export { buildFanficCanonSection, buildCharacterVoiceProfiles, buildFanficModeInstructions } from "./agents/fanfic-prompt-sections.js";
+export { DualDetector, type DetectionIssue, type DetectionReport, type DualDetectorOptions } from "./agents/dual-detector.js";
+export { EntityExtractor, type ExtractionResult } from "./agents/entity-extractor.js";
 export * from "./prompts/index.js";
 
 // Utils
@@ -440,6 +480,10 @@ export {
 } from "./utils/hook-governance.js";
 export { arbitrateRuntimeStateDeltaHooks, type HookArbiterDecision } from "./utils/hook-arbiter.js";
 export { analyzeHookHealth } from "./utils/hook-health.js";
+export { analyzeAllHooksPressure, formatPressureReportMarkdown } from "./utils/hook-pressure.js";
+export { detectVoiceStyle, applyVoiceProfile, compareVoiceProfiles, getVoicePreset, VOICE_PRESETS, type VoiceProfile, type VoicePreset } from "./utils/voice-profiles.js";
+export { HealthChecker, type HealthCheckResult, type HealthReport } from "./agents/health-checker.js";
+export { generateHealthReportMarkdown, generateHealthReportJSON } from "./utils/health-report.js";
 
 // Pipeline
 export { PipelineRunner, type PipelineConfig, type ChapterPipelineResult, type DraftResult, type PlanChapterResult, type ComposeChapterResult, type ReviseResult, type TruthFiles, type BookStatusInfo, type ImportChaptersInput, type ImportChaptersResult, type TokenUsageSummary } from "./pipeline/runner.js";
@@ -448,10 +492,11 @@ export { detectChapter, detectAndRewrite, loadDetectionHistory, type DetectChapt
 
 // State
 export { StateManager } from "./state/manager.js";
-export { bootstrapStructuredStateFromMarkdown } from "./state/state-bootstrap.js";
+export { bootstrapStructuredStateFromMarkdown, parsePendingHooksMarkdown } from "./state/state-bootstrap.js";
 export { renderCurrentStateProjection, renderHooksProjection, renderChapterSummariesProjection } from "./state/state-projections.js";
 export { applyRuntimeStateDelta, type RuntimeStateSnapshot } from "./state/state-reducer.js";
 export { validateRuntimeState, type RuntimeStateValidationIssue } from "./state/state-validator.js";
+export { EntityDB } from "./state/entity-db.js";
 
 // Notify
 export { dispatchNotification, dispatchWebhookEvent, type NotifyMessage } from "./notify/dispatcher.js";
@@ -492,3 +537,120 @@ export async function sendWebhook(
   const transport = await import("./notify/webhook.js");
   await transport.sendWebhook(config, payload);
 }
+
+// ══════════════════════════════════════════════════════════════
+// 新增模块导出 (V3.1)
+// ══════════════════════════════════════════════════════════════
+
+// ── 合规管理系统 ──
+export type {
+  Platform as CompliancePlatform,
+  PlatformPolicy,
+  ComplianceIssueType,
+  IssueSeverity,
+  ComplianceIssue,
+  DetectorResult,
+  ComplianceReportData,
+  ContentAnalysisResult,
+} from "./compliance/index.js";
+
+export {
+  PolicyEngine,
+  PLATFORM_POLICIES,
+  ContentAnalyzer,
+  LabelGenerator,
+  ReportBuilder,
+} from "./compliance/index.js";
+
+// ── 去AI味系统 ──
+export type {
+  PerplexityResult,
+  ReconstructStrategy,
+  ReconstructOptions,
+  GenreType,
+  GenreAdapterConfig,
+} from "./anti-ai/index.js";
+
+export {
+  PerplexityAnalyzer,
+  SentenceReconstructor,
+  GenreAdapter,
+  BurstinessAdjuster,
+  VocabularyEnhancer,
+  Humanizer,
+} from "./anti-ai/index.js";
+
+// ── 情感深度增强 ──
+export type {
+  EmotionType,
+  EmotionalChapter,
+  EmotionalArc,
+  StoryStructure,
+  NaturalnessResult,
+} from "./emotional/index.js";
+
+export {
+  EmotionAnalyzer,
+  ArcPlanner,
+  EmotionInjector,
+  NaturalnessTester,
+} from "./emotional/index.js";
+
+// ── 创意原创性 ──
+export type {
+  Trope,
+  TropeDetectionResult,
+  OriginalityResult,
+  SuggestionType,
+  Suggestion,
+} from "./creativity/index.js";
+
+export {
+  TropeDetector,
+  OriginalityScorer,
+  SuggestionEngine,
+} from "./creativity/index.js";
+
+// ── 长篇连贯性管理 ──
+export type {
+  ForeshadowImportance,
+  ForeshadowStatus,
+  Foreshadow,
+  CharacterState,
+  Relationship,
+  Item,
+  TimelineEvent,
+  ConsistencyIssue,
+  TimelineConflict,
+} from "./consistency/index.js";
+
+export {
+  ForeshadowTracker,
+  CharacterStateSync,
+  TimelineManager,
+  ConsistencyChecker,
+} from "./consistency/index.js";
+
+// ── 用户偏好学习 ──
+export type {
+  EditType,
+  UserEdit,
+  WritingPreference,
+  StylePreference,
+  SentencePreference,
+  VocabularyPreference,
+  EmotionPreference,
+  NarrativePreference,
+  WordEntry,
+} from "./learning/index.js";
+
+export {
+  EditTracker,
+  PreferenceAnalyzer,
+  UserProfileManager,
+  PromptEnhancer,
+  ColdStartHandler,
+} from "./learning/index.js";
+
+// ── 工具函数 ──
+export { LRUCache, withCache } from "./utils/cache.js";
