@@ -37,8 +37,19 @@ export const auditCommand = new Command("audit")
         log(`  Summary: ${result.summary}`);
         if (result.issues.length > 0) {
           log("  Issues:");
-          for (const issue of result.issues) {
-            log(`    [${issue.severity}] ${issue.category}: ${issue.description}`);
+          const humanIssues = result.issues.filter((i) => (i as { repairScope?: string }).repairScope === "humanity-enhance");
+          const structIssues = result.issues.filter((i) => (i as { repairScope?: string }).repairScope !== "humanity-enhance");
+          if (structIssues.length > 0) {
+            log(`    [结构问题] (${structIssues.length})`);
+            for (const issue of structIssues) {
+              log(`      [${issue.severity}] ${issue.category}: ${issue.description}`);
+            }
+          }
+          if (humanIssues.length > 0) {
+            log(`    [真人感问题] (${humanIssues.length})`);
+            for (const issue of humanIssues) {
+              log(`      [${issue.severity}] ${issue.category}: ${issue.description}`);
+            }
           }
         }
       }

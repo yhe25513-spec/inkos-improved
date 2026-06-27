@@ -74,7 +74,7 @@ describe("interaction tools", () => {
     await tools.reviseDraft("harbor", 3, "rewrite");
 
     expect(pipeline.writeNextChapter).toHaveBeenCalledWith("harbor");
-    expect(pipeline.reviseDraft).toHaveBeenCalledWith("harbor", 3, "rewrite");
+    expect(pipeline.reviseDraft).toHaveBeenCalledWith("harbor", 3, "rewrite", undefined);
     expect((writeResult as { __interaction?: { activeChapterNumber?: number } }).__interaction?.activeChapterNumber).toBe(1);
     expect(events).toEqual([]);
   });

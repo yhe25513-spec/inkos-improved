@@ -64,6 +64,9 @@ export interface StoredHook {
   // (architect-time structural rules + consolidator-time advanced_count rule).
   // Reviewer uses this to gate critical-severity escalation.
   readonly promoted?: boolean;
+  // Phase 8 — Chekhov's Gun callback fields (v1.1 upgrade).
+  readonly seedText?: string;
+  readonly callbackFrom?: ReadonlyArray<number>;
 }
 
 export class MemoryDB {
@@ -352,6 +355,41 @@ export class MemoryDB {
   // ---------------------------------------------------------------------------
   // Lifecycle
   // ---------------------------------------------------------------------------
+
+  /**
+   * Return all distinct character names referenced in facts and chapter summaries.
+   *
+   * Used as a fallback data source when neither character_voices.json nor
+   * the entity database contain usable character profiles.
+   */
+  listCharacters(): ReadonlyArray<string> {
+    const names = new Set<string>();
+
+    try {
+      const factRows = this.db
+        .prepare(`SELECT DISTINCT subject AS name FROM facts WHERE subject IS NOT NULL AND subject != ''`)
+        .all() as ReadonlyArray<{ name: string }>;
+      for (const row of factRows) names.add(row.name);
+    } catch {
+      /* ignore read errors */
+    }
+
+    try {
+      const summaryRows = this.db
+        .prepare(`SELECT characters FROM chapter_summaries WHERE characters IS NOT NULL AND characters != ''`)
+        .all() as ReadonlyArray<{ characters: string }>;
+      for (const row of summaryRows) {
+        for (const raw of row.characters.split(/[,，、;；\n]+/)) {
+          const trimmed = raw.trim();
+          if (trimmed) names.add(trimmed);
+        }
+      }
+    } catch {
+      /* ignore read errors */
+    }
+
+    return Array.from(names);
+  }
 
   close(): void {
     this.db.close();

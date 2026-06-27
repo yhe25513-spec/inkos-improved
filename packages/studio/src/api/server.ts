@@ -11,6 +11,7 @@ import {
   computeAnalytics,
   loadProjectConfig,
   loadProjectSession,
+  persistProjectSession,
   processProjectInteractionRequest,
   resolveSessionActiveBook,
   listBookSessions,
@@ -3586,6 +3587,55 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+
+          // 检测 REVISION_REQUIRED 错误 - 前序章节需要修订
+          if (message.startsWith("REVISION_REQUIRED:")) {
+            const chapterMatch = message.match(/^REVISION_REQUIRED:(\d+)/);
+            const revisionChapter = chapterMatch ? parseInt(chapterMatch[1]) : 1;
+            const revisionMessage = message.split("\n").slice(1).join("\n") || `第${revisionChapter}章审核未通过，请先修订`;
+
+            const toolResult = { content: [{ type: "text", text: revisionMessage }] };
+            const exec: CollectedToolExec = {
+              id: toolCallId,
+              tool: "sub_agent",
+              agent: "writer",
+              label: resolveToolLabel("sub_agent", "writer"),
+              status: "error",
+              args: toolArgs,
+              error: revisionMessage,
+              startedAt: Date.now(),
+              completedAt: Date.now(),
+              details: {
+                kind: "revision_required",
+                bookId: directWriteBookId,
+                chapterNumber: revisionChapter,
+                message: revisionMessage,
+              },
+            };
+            broadcast("tool:end", {
+              sessionId: streamSessionId,
+              id: toolCallId,
+              tool: "sub_agent",
+              result: toolResult,
+              isError: true,
+              details: exec.details,
+            });
+            await appendManualSessionMessages(root, bookSession.sessionId, [
+              manualToolAssistantMessage(
+                revisionMessage,
+                exec,
+                configuredEntry?.service ?? reqService ?? config.llm.provider,
+                reqModel ?? config.llm.model,
+              ),
+            ], instruction, manualToolAppendOptions(sessionKind, exec)).catch(() => undefined);
+            await refreshBookSessionFromTranscript().catch(() => undefined);
+            broadcast("agent:error", { instruction, activeBookId: agentBookId, sessionId: bookSession.sessionId, sessionKind, error: revisionMessage });
+            return c.json({
+              error: { code: "REVISION_REQUIRED", message: revisionMessage, chapterNumber: revisionChapter },
+              response: revisionMessage,
+            });
+          }
+
           const toolResult = { content: [{ type: "text", text: message }] };
           const exec: CollectedToolExec = {
             id: toolCallId,
@@ -3935,18 +3985,346 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
       const content = await readFile(join(chaptersDir, match), "utf-8");
       const currentConfig = await loadCurrentProjectConfig();
-      const { ContinuityAuditor } = await import("@actalk/inkos-core");
+      const { ContinuityAuditor, HumanityAuditor } = await import("@actalk/inkos-core");
       const auditor = new ContinuityAuditor({
         client: createLLMClient(currentConfig.llm),
         model: currentConfig.llm.model,
         projectRoot: root,
         bookId: id,
       });
-      const result = await auditor.auditChapter(bookDir, content, chapterNum, book.genre);
+
+      let result;
+      try {
+        result = await auditor.auditChapter(bookDir, content, chapterNum, book.genre);
+      } catch (auditError) {
+        console.error(`[audit] Chapter ${chapterNum} continuity audit failed:`, auditError);
+        result = {
+          passed: false,
+          issues: [],
+          summary: `结构审计过程中出错: ${auditError instanceof Error ? auditError.message : String(auditError)}`,
+          overallScore: 0,
+        };
+      }
+
+      // 确保 result 是有效的对象
+      if (!result || typeof result !== "object") {
+        result = {
+          passed: false,
+          issues: [],
+          summary: "审计返回了无效结果",
+          overallScore: 0,
+        };
+      }
+
+      // --- 真人感审计 ---
+      // 在结构审计后额外执行真人感审计，并将其问题合并到总结果中
+      try {
+        const humanityAuditor = new HumanityAuditor({
+          client: createLLMClient(currentConfig.llm),
+          model: currentConfig.llm.model,
+          projectRoot: root,
+          bookId: id,
+        });
+        const humanityResult = await humanityAuditor.auditHumanity(
+          bookDir,
+          content,
+          chapterNum,
+          book.genre,
+        );
+        if (humanityResult && Array.isArray(humanityResult.issues) && humanityResult.issues.length > 0) {
+          // 给真人感问题打上 humanity-enhance 标签，便于区分展示
+          const humanityIssues = humanityResult.issues.map((issue) => ({
+            severity: issue.severity,
+            category: issue.category,
+            description: issue.description,
+            suggestion: issue.suggestion ?? "",
+            repairScope: "humanity-enhance" as const,
+          }));
+          result = {
+            ...result,
+            issues: [...result.issues, ...humanityIssues],
+            humanityAuditScore: humanityResult.overallScore,
+            humanityAuditSummary: humanityResult.summary,
+            // 综合通过判断：结构通过且真人感分数不低于 80
+            passed:
+              result.passed &&
+              (humanityResult.overallScore ?? 0) >= 80 &&
+              !humanityResult.issues.some((i) => i.severity === "critical"),
+          };
+        } else if (humanityResult) {
+          // 真人感审计成功但无问题，记录分数
+          result = {
+            ...result,
+            humanityAuditScore: humanityResult.overallScore,
+            humanityAuditSummary: humanityResult.summary,
+          };
+        }
+      } catch (humanityError) {
+        console.error(`[audit] Chapter ${chapterNum} humanity audit failed:`, humanityError);
+        // 真人感审计失败不阻断主结果，仅在 summary 中提示
+        result = {
+          ...result,
+          summary: result.summary + `\n\n（真人感审计过程中出错: ${humanityError instanceof Error ? humanityError.message : String(humanityError)}）`,
+        };
+      }
+
       broadcast("audit:complete", { bookId: id, chapter: chapterNum, passed: result.passed });
       return c.json(result);
     } catch (e) {
       broadcast("audit:error", { bookId: id, error: String(e) });
+      // 确保返回有效的 JSON
+      return c.json({
+        passed: false,
+        issues: [],
+        summary: `审计失败: ${e instanceof Error ? e.message : String(e)}`,
+        overallScore: 0,
+      });
+    }
+  });
+
+  // --- Audit with plan (re-audit after revision) ---
+  app.post("/api/v1/books/:id/audit-with-plan/:chapter", async (c) => {
+    const id = c.req.param("id");
+    const chapterNum = parseInt(c.req.param("chapter"), 10);
+    const bookDir = state.bookDir(id);
+
+    try {
+      const book = await state.loadBookConfig(id);
+      const chaptersDir = join(bookDir, "chapters");
+      const files = await readdir(chaptersDir);
+      const paddedNum = String(chapterNum).padStart(4, "0");
+      const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+      if (!match) return c.json({ error: "Chapter not found" }, 404);
+
+      const content = await readFile(join(chaptersDir, match), "utf-8");
+      const currentConfig = await loadCurrentProjectConfig();
+      const { ContinuityAuditor, HumanityAuditor } = await import("@actalk/inkos-core");
+
+      // 结构审计
+      const auditor = new ContinuityAuditor({
+        client: createLLMClient(currentConfig.llm),
+        model: currentConfig.llm.model,
+        projectRoot: root,
+        bookId: id,
+      });
+
+      let result;
+      try {
+        result = await auditor.auditChapter(bookDir, content, chapterNum, book.genre);
+      } catch (auditError) {
+        result = {
+          passed: false,
+          issues: [],
+          summary: `审计过程中出错: ${auditError instanceof Error ? auditError.message : String(auditError)}`,
+          overallScore: 0,
+        };
+      }
+
+      // 真人感审计
+      if (result) {
+        try {
+          const humanityAuditor = new HumanityAuditor({
+            client: createLLMClient(currentConfig.llm),
+            model: currentConfig.llm.model,
+            projectRoot: root,
+            bookId: id,
+          });
+          const humanityResult = await humanityAuditor.auditHumanity(
+            bookDir,
+            content,
+            chapterNum,
+            book.genre,
+          );
+          if (humanityResult && Array.isArray(humanityResult.issues) && humanityResult.issues.length > 0) {
+            const humanityIssues = humanityResult.issues.map((issue) => ({
+              severity: issue.severity,
+              category: issue.category,
+              description: issue.description,
+              suggestion: issue.suggestion ?? "",
+              repairScope: "humanity-enhance" as const,
+            }));
+            const hScore = humanityResult.overallScore ?? 0;
+            const hasCriticalHumanityIssue = humanityResult.issues.some((i) => i.severity === "critical");
+            result = {
+              ...result,
+              issues: [...result.issues, ...humanityIssues],
+              passed: result.passed && hScore >= 80 && !hasCriticalHumanityIssue,
+            };
+          }
+        } catch (humanityError) {
+          console.error(`[audit-with-plan] Chapter ${chapterNum} humanity audit failed:`, humanityError);
+        }
+      }
+
+      // 确保 result 有效
+      if (!result || typeof result !== "object") {
+        result = {
+          passed: false,
+          issues: [],
+          summary: "审计返回了无效结果",
+          overallScore: 0,
+        };
+      }
+
+      // 按严重程度分组
+      const criticalIssues = result.issues.filter((i) => i.severity === "critical");
+      const warningIssues = result.issues.filter((i) => i.severity === "warning");
+      const infoIssues = result.issues.filter((i) => i.severity === "info");
+
+      const planResponse = {
+        chapterNumber: chapterNum,
+        preScore: result.overallScore ?? 70,
+        passed: result.passed,
+        summary: result.summary,
+        threshold: 70,
+        wordCount: {
+          actual: 0,
+          target: 3000,
+          ok: true,
+        },
+        groups: [
+          {
+            groupId: "critical",
+            labelZh: "严重问题",
+            labelEn: "Critical Issues",
+            items: criticalIssues.map((issue, index) => ({
+              id: `critical-${index}`,
+              severity: issue.severity,
+              category: issue.category,
+              description: issue.description,
+              suggestion: (issue as { suggestion?: string }).suggestion ?? "",
+              repairScope: (issue as { repairScope?: string }).repairScope,
+            })),
+          },
+          {
+            groupId: "warning",
+            labelZh: "建议改进",
+            labelEn: "Warnings",
+            items: warningIssues.map((issue, index) => ({
+              id: `warning-${index}`,
+              severity: issue.severity,
+              category: issue.category,
+              description: issue.description,
+              suggestion: (issue as { suggestion?: string }).suggestion ?? "",
+              repairScope: (issue as { repairScope?: string }).repairScope,
+            })),
+          },
+          {
+            groupId: "info",
+            labelZh: "信息提示",
+            labelEn: "Info",
+            items: infoIssues.map((issue, index) => ({
+              id: `info-${index}`,
+              severity: issue.severity,
+              category: issue.category,
+              description: issue.description,
+              suggestion: (issue as { suggestion?: string }).suggestion ?? "",
+              repairScope: (issue as { repairScope?: string }).repairScope,
+            })),
+          },
+        ],
+      };
+
+      return c.json(planResponse);
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Consistency Check ---
+
+  app.post("/api/v1/books/:id/consistency", async (c) => {
+    const id = c.req.param("id");
+    const { chapter } = await c.req.json<{ chapter: number }>();
+
+    try {
+      const { ConsistencyChecker, ForeshadowTracker, CharacterStateSync, TimelineManager } = await import("@actalk/inkos-core");
+      
+      const foreshadowTracker = new ForeshadowTracker();
+      const characterSync = new CharacterStateSync();
+      const timelineManager = new TimelineManager();
+      const checker = new ConsistencyChecker(foreshadowTracker, characterSync, timelineManager);
+      
+      const result = checker.checkConsistency(id, chapter);
+      
+      // 保存方案到会话记忆
+      const session = await loadProjectSession(root);
+      session.lastConsistencyResult = result;
+      await persistProjectSession(root, session);
+      
+      // 生成可执行的方案按钮数据
+      const proposalButtons = result.proposals.map((proposal: { id: string; name: string; description: string }) => ({
+        id: proposal.id,
+        name: proposal.name,
+        description: proposal.description,
+        executeUrl: `/api/v1/books/${encodeURIComponent(id)}/consistency/execute`,
+      }));
+      
+      return c.json({
+        ...result,
+        proposalButtons,
+      });
+    } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  // --- Execute Fix Proposal ---
+
+  app.post("/api/v1/books/:id/consistency/execute", async (c) => {
+    const id = c.req.param("id");
+    const { proposalId } = await c.req.json<{ proposalId: string }>();
+    const bookDir = state.bookDir(id);
+
+    try {
+      // 从会话记忆中读取之前保存的方案
+      const session = await loadProjectSession(root);
+      const consistencyResult = session.lastConsistencyResult as { proposals: Array<{ id: string; name: string; actions: Array<{ type: string; targetFile: string; oldValue?: string; newValue: string; description: string }> }> };
+      
+      if (!consistencyResult) {
+        return c.json({ error: "未找到一致性检查结果，请先运行一致性检查" }, 400);
+      }
+
+      const proposal = consistencyResult.proposals.find((p: { id: string }) => p.id === proposalId);
+      
+      if (!proposal) {
+        return c.json({ error: `未找到方案 ${proposalId}` }, 400);
+      }
+
+      // 执行方案中的所有动作
+      const executedActions: string[] = [];
+      
+      for (const action of proposal.actions) {
+        const targetPath = join(bookDir, action.targetFile);
+        
+        if (action.type === "edit_file" || action.type === "update_setting") {
+          if (action.oldValue) {
+            let content = await readFile(targetPath, "utf-8");
+            content = content.replace(action.oldValue, action.newValue);
+            await writeFile(targetPath, content, "utf-8");
+          } else {
+            await writeFile(targetPath, action.newValue, "utf-8");
+          }
+          executedActions.push(action.description);
+        } else if (action.type === "add_content") {
+          const content = await readFile(targetPath, "utf-8");
+          await writeFile(targetPath, content + "\n" + action.newValue, "utf-8");
+          executedActions.push(action.description);
+        }
+      }
+
+      // 清除已执行的方案（避免重复执行）
+      session.lastConsistencyResult = undefined;
+      await persistProjectSession(root, session);
+
+      return c.json({
+        success: true,
+        proposalId,
+        proposalName: proposal.name,
+        executedActions,
+        message: `方案 "${proposal.name}" 已成功执行`,
+      });
+    } catch (e) {
       return c.json({ error: String(e) }, 500);
     }
   });
@@ -3958,8 +4336,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const chapterNum = parseInt(c.req.param("chapter"), 10);
     const bookDir = state.bookDir(id);
     const body = await c.req
-      .json<{ mode?: string; brief?: string }>()
-      .catch(() => ({ mode: "spot-fix", brief: undefined }));
+      .json<{ mode?: string; brief?: string; userInstruction?: string; selectedIssues?: string[] }>()
+      .catch(() => ({ mode: "spot-fix", brief: undefined, userInstruction: undefined, selectedIssues: undefined }));
 
     broadcast("revise:start", { bookId: id, chapter: chapterNum });
     try {
@@ -3970,6 +4348,19 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
       if (!match) return c.json({ error: "Chapter not found" }, 404);
 
+      // 组装修订指令：优先用户指令 > 选中的问题点 > body.brief
+      const instructionParts: string[] = [];
+      if (body.userInstruction && body.userInstruction.trim().length > 0) {
+        instructionParts.push(body.userInstruction.trim());
+      }
+      if (body.selectedIssues && body.selectedIssues.length > 0) {
+        instructionParts.push(`需要重点处理的问题：${body.selectedIssues.join("；")}`);
+      }
+
+      const effectiveUserInstruction = instructionParts.length > 0
+        ? instructionParts.join("\n\n")
+        : undefined;
+
       const pipeline = new PipelineRunner(await buildPipelineConfig({
         externalContext: body.brief,
       }));
@@ -3978,6 +4369,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
         id,
         chapterNum,
         normalizedMode as "polish" | "rewrite" | "rework" | "spot-fix" | "anti-detect",
+        effectiveUserInstruction,
       );
       broadcast("revise:complete", { bookId: id, chapter: chapterNum });
       return c.json(result);

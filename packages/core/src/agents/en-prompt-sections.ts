@@ -14,6 +14,14 @@ export function buildEnglishCoreRules(_book: BookConfig): string {
 5. **Relationship logic**: Any relationship change must be set up by events and motivated by interests.
 
 ### Narrative Technique
+
+**【Information Reveal — HARD RULES (every chapter, not only the first three)】**
+Any worldbuilding / lore / backstory / background fact must ride on a specific action, line of dialogue, or object — never as a standalone paragraph.
+- ✗ "This continent has three cultivation systems, ranked..." → ✓ "He slotted the spirit stone into the groove. The stone bore a rank-seven engraving. He was rank-five."
+- ✗ "The story takes place three hundred years after..." → ✓ Let "three hundred years" surface through something a character says or finds or reacts to.
+- Never open a paragraph with "this world / this continent / this kingdom / this era / this system" followed by pure explanation.
+- Self-check: If you can delete this paragraph and the next beat of the plot still makes sense, it is pure exposition — cut or rewrite it.
+
 6. **Show, don't tell**: Convey through action and sensory detail, not exposition. Values expressed through behavior, not declared.
 7. **Sensory grounding**: Each scene includes 1-2 sensory details beyond the visual.
 8. **Chapter hooks**: Every chapter ending needs a hook—question, reveal, threat, promise.
@@ -46,7 +54,34 @@ export function buildEnglishCoreRules(_book: BookConfig): string {
 ### Chapter Cut (80/20 cliffhanger, hard ruler)
 - **Never finish the chapter's story inside the chapter.** Write the main beat to ~80%; leave the last ~20% (the result / reveal / fallout) for the next chapter to open on.
 - End ~80% of chapters at the action-climax moment — the blow about to land, the door swinging open, the name not yet spoken — and let the reader turn the page for the result. The other ~20% may close on a beat of earned calm.
-- **Structure outranks word count.** Overshoot the target by a few hundred words to complete a clean beat and cut, rather than break rhythm to hit a number. Never pad with filler to reach length, and never resolve the climax early just to stay under it.`;
+- **Structure outranks word count.** Overshoot the target by a few hundred words to complete a clean beat and cut, rather than break rhythm to hit a number. Never pad with filler to reach length, and never resolve the climax early just to stay under it.
+
+### Concrete over Abstract (hard rule)
+- "He was very nervous" → "He tapped the steering wheel seven times."
+- "This place was dangerous" → "He noticed the man at the alley mouth never took his left hand out of his pocket."
+- "She was very beautiful" → "Two guys at the bar both looked up as she walked in."
+- Any bare adjective standing alone as a complete thought is a weak spot — ask what a camera would show, and write that instead.
+
+### Character Judgment
+- Every chapter, the POV character must make at least one explicit judgment about their situation — spoken aloud, acted on, or shown through a decision.
+- ✗ "He realized something was wrong." (narrator fiat)
+- ✓ "Not safe." He slipped the phone onto silent and stuffed it back. (judgment through action)
+- ✓ "Trap," he said under his breath, already stepping back. (judgment through ultra-short dialogue)
+- A character who only receives information without judging it is a camera, not a protagonist.
+
+### Sentence Rhythm (hard rule)
+- Mix short and long sentences. Five sentences in a row of nearly identical length = mechanical cadence = reader fatigue.
+- Every ~500 words, drop one sentence of ≤12 words as a standalone paragraph — a "short-bomb sentence" that gives the reader a beat of silence. After one short-bomb, the next paragraph must be a normal-length narrative paragraph that regathers the action.
+- Never stack 3+ one-sentence paragraphs in a row.
+
+### No Information Dump Masquerading as Narration
+- Never start a paragraph with "This is a world of..." / "In this kingdom..." / "The organization was founded in..." followed by pure explanation.
+- Every worldbuilding detail must ride on an action, a line of dialogue, or an object.
+
+### Climax — Perform, Don't Summarize
+- The high-stakes beat must be written beat by beat: action, dialogue, sensory detail, pauses, pacing.
+- ✗ "Then he saved them, the police arrived, and the antagonist was arrested."
+- ✓ Write the fight, the hesitation, the mistake, the reversal — one concrete moment at a time.`;
 }
 
 // English equivalent of buildAntiAIExamples()
@@ -88,7 +123,14 @@ If the same metaphor appears twice, the third occurrence MUST switch to a new im
 | She was overwhelmed with sadness. | She held the phone with both hands, knuckles white. | Physical detail replaces label |
 | However, things were not as simple. | Yeah, right. Nothing's ever that easy. | Character voice replaces narrator hedge |
 | He saw a shadow move across the wall. | A shadow slid across the wall. | Remove filter word "saw" |
-| "I won't do it," she exclaimed defiantly. | "I won't do it." She crossed her arms. | Action beat > adverb + fancy tag |`;
+| "I won't do it," she exclaimed defiantly. | "I won't do it." She crossed her arms. | Action beat > adverb + fancy tag |
+| He was very nervous. | He tapped the steering wheel seven times. | Concrete detail replaces bare adjective |
+| She was very beautiful. | Two guys at the bar both looked up as she walked in. | Behavior reveals character |
+| This was an important moment for everyone involved. | He caught the ball. That was the game. | Write what one specific character does — skip the group summary |
+| The room was filled with tension. | A spoon clattered off the edge of a saucer and nobody moved to catch it. | Physical detail beats abstract label |
+| He made a decision. | He stood up. | Decision = action, not a tag-line |
+| "She was not like other girls." | She knew every constellation visible from the roof. | Show, don't tell + ban "not like other X" construction |
+| The situation was very tense. | He checked his watch for the third time in two minutes. | Observable behavior replaces emotion label |`;
 }
 
 // English equivalent of buildCharacterPsychologyMethod()
@@ -108,15 +150,16 @@ This method is for YOUR planning. The terms never appear in the chapter text.`;
 // English pre-write checklist
 export function buildEnglishPreWriteChecklist(book: BookConfig, gp: GenreProfile): string {
   const items = [
-    "Outline anchor: Which volume_outline plot point does this chapter advance?",
+    "Outline anchor: Which outline plot point does this chapter advance?",
     "POV: Whose perspective? Consistent throughout?",
     "Hook planted: What question/promise/threat carries reader to next chapter?",
     "Sensory grounding: At least 2 non-visual senses per major scene",
-    "Character consistency: Does every character act from their established motivation?",
+    "Character consistency: Does each character act from their established motivation?",
     "Information boundary: No character references info they haven't witnessed",
-    `Pacing: Chapter targets ${book.chapterWordCount} words. ${gp.pacingRule}`,
-    "Show don't tell: Are emotions shown through action, not labeled?",
-    "AI-tell check: No banned analytical language in prose?",
+    "Character judgment: Has the POV character made an explicit judgment about their situation this chapter? If a reader can't say 'the POV thinks X about the situation', the judgment layer is missing — add a short judgment line or a judgment-driven action.",
+    `Pacing: Chapter target ${book.chapterWordCount} words. ${gp.pacingRule}`,
+    "Show don't tell: Emotions shown through action, not labeled",
+    "AI-tell scan: No banned analytical language in prose",
     "Conflict: What is the core tension driving this chapter?",
   ];
 

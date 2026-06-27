@@ -46,6 +46,13 @@ export const HookRecordSchema = z.object({
   // ledgers; architect-seed and consolidator-rerun both populate it going
   // forward. Reviewer uses it to gate critical severity for stale hooks.
   promoted: z.boolean().optional(),
+  // Phase 8 — Chekhov's Gun callback fields (v1.1 upgrade).
+  // seedText: The original prose fragment when this hook was first planted (≤80 chars).
+  //           Writer reads this when resolving to write a callback sentence.
+  // callbackFrom: Chapters where the protagonist/character "actively thought of or mentioned"
+  //               this hook's core element. More entries = stronger "reader remembers" feel.
+  seedText: z.string().max(200).default("").optional(),
+  callbackFrom: z.array(z.number().int().min(0)).default([]).optional(),
 });
 
 export type HookRecord = z.infer<typeof HookRecordSchema>;

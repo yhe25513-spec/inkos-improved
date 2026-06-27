@@ -68,6 +68,104 @@ InkOS Play 发布和 Studio 体验升级：你可以用一句自然语言创建�
 
 **Native English novel writing now supported！** Set `--lang en` to write in English. See [English README](README.en.md) for details.
 
+## 快速开始（开发者）
+
+### 环境要求
+
+- **Node.js** >= 20.0.0（推荐 22+）
+- **pnpm** >= 9.0.0
+- **Git Bash**（Windows 用户）
+
+### 安装与构建
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/yhe25513-spec/inkos-improved.git
+cd inkos-improved
+
+# 2. 安装依赖
+pnpm install
+
+# 3. 构建所有包（core + cli + studio）
+pnpm build
+
+# 4. （如果 workspace 包未链接）手动创建符号链接
+# Windows:
+#   mkdir node_modules\@actalk
+#   mklink /D node_modules\@actalk\inkos-core ..\..\packages\core
+#   mklink /D node_modules\@actalk\inkos ..\..\packages\cli
+#   mklink /D node_modules\@actalk\inkos-studio ..\..\packages\studio
+# macOS/Linux:
+#   mkdir -p node_modules/@actalk
+#   ln -s ../../packages/core node_modules/@actalk/inkos-core
+#   ln -s ../../packages/cli node_modules/@actalk/inkos
+#   ln -s ../../packages/studio node_modules/@actalk/inkos-studio
+```
+
+### 配置 LLM
+
+编辑 `inkos.json`，配置你的 LLM 服务：
+
+```json
+{
+  "provider": "openai",
+  "service": "deepseek",
+  "model": "deepseek-v4-flash",
+  "apiKey": "你的API密钥"
+}
+```
+
+也支持通过环境变量配置：设置 `INKOS_API_KEY` 或各服务的专用环境变量。
+
+### 启动
+
+```bash
+# 方式 1：Studio 网页工作台（推荐）
+双击 启动InkOS.bat
+# 或手动：node packages/studio/dist/api/index.js .
+# 浏览器打开 http://localhost:4570
+
+# 方式 2：CLI 命令行
+node packages/cli/dist/index.js --help
+
+# 方式 3：Claude Code 对话式写作
+# 在项目根目录下启动 Claude Code，直接对 AI 说"写下一章"
+```
+
+### 部署写作基础设施
+
+```bash
+# 为新书项目部署 hooks/rules/agents
+node packages/cli/dist/index.js init [项目名]
+
+# 或使用 skill 系统
+/story-setup
+```
+
+### 写小说基本流程
+
+1. **创建书** — Studio 中点击"开始创作" 或 CLI `inkos book create`
+2. **写章节** — 对话中说"写下一章"（会先生成计划让你确认）
+3. **审查** — "审查第1章" 检查质量和一致性
+4. **修改** — "修改第1章" 按审计建议修订
+5. **删除** — "删除第3章" 删除不需要的章节（会先确认，不可恢复）
+
+### 项目结构
+
+```
+inkos-dev/
+├── packages/
+│   ├── core/          # 核心引擎（pipeline、agents、state）
+│   ├── cli/           # 命令行工具
+│   └── studio/        # Web 工作台（React + Hono）
+├── books/             # 你的小说项目
+│   └── 书名/
+│       ├── chapters/  # 正文章节
+│       └── story/     # 设定、大纲、角色、追踪
+├── .claude/           # Claude Code 配置（agents、hooks、rules）
+└── .agents/skills/    # 写作技能定义
+```
+
 ## 欢迎交流
 
 > 当前更新相对频繁，后续会持续新增功能与优化写作效果。

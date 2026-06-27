@@ -104,6 +104,8 @@ export async function resolveStudioLaunch(root: string): Promise<StudioLaunchSpe
     join(cliPackageRoot, "node_modules", "@actalk", "inkos-studio", "server.cjs"),
     join(cliPackageRoot, "..", "inkos-studio", "dist", "api", "index.js"),
     join(cliPackageRoot, "..", "inkos-studio", "server.cjs"),
+    join(cliPackageRoot, "..", "studio", "dist", "api", "index.js"),
+    join(cliPackageRoot, "..", "studio", "server.cjs"),
   ]);
   if (builtEntry) {
     return {

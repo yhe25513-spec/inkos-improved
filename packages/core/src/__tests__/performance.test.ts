@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import { PerplexityAnalyzer } from "../anti-ai/perplexity-analyzer.js";
 import { SentenceReconstructor } from "../anti-ai/sentence-reconstructor.js";
 import { EmotionAnalyzer } from "../emotional/emotion-analyzer.js";
-import { TropeDetector } from "../creativity/trope-detector.js";
 import { PreferenceAnalyzer } from "../learning/preference-analyzer.js";
 import { ForeshadowTracker } from "../consistency/foreshadow-tracker.js";
 import { LRUCache } from "../utils/cache.js";
@@ -57,18 +56,6 @@ describe("Performance: EmotionAnalyzer", () => {
     analyzer.analyze(text);
     const duration = performance.now() - start;
     expect(duration).toBeLessThan(50);
-  });
-});
-
-describe("Performance: TropeDetector", () => {
-  const detector = new TropeDetector();
-
-  it("should detect tropes in under 100ms", () => {
-    const text = "他重生了，获得了系统，开始逆袭打脸。".repeat(20);
-    const start = performance.now();
-    detector.detect(text);
-    const duration = performance.now() - start;
-    expect(duration).toBeLessThan(100);
   });
 });
 

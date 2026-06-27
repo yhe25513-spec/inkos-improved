@@ -10,6 +10,9 @@ export type {
   TimelineEvent,
   ConsistencyIssue,
   TimelineConflict,
+  FixProposal,
+  FixAction,
+  ConsistencyCheckResult,
 } from "./types.js";
 
 export { ForeshadowTracker } from "./foreshadow-tracker.js";

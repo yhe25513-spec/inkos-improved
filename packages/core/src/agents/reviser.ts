@@ -30,6 +30,7 @@ import {
 } from "../utils/outline-paths.js";
 import { DualDetector, type DualDetectorOptions } from "./dual-detector.js";
 import type { VoiceProfile } from "../utils/voice-profiles.js";
+import { buildHumanityEnhanceSystemPrompt, buildHumanityEnhanceUserPrompt } from "./humanity-reviser-prompts.js";
 
 export type ReviseMode = "auto" | "polish" | "rewrite" | "rework" | "anti-detect" | "spot-fix";
 
@@ -42,6 +43,7 @@ export interface ReviseOutput {
   readonly updatedState: string;
   readonly updatedLedger: string;
   readonly updatedHooks: string;
+  readonly criticalFailure?: boolean;
   readonly tokenUsage?: {
     readonly promptTokens: number;
     readonly completionTokens: number;
@@ -49,7 +51,7 @@ export interface ReviseOutput {
   };
 }
 
-type AutoOutputMode = "patch-only" | "rewrite-only" | "allow-full";
+type AutoOutputMode = "patch-only" | "rewrite-only" | "allow-full" | "humanity-enhance";
 
 function buildTieredIssueList(
   issues: ReadonlyArray<AuditIssue>,
@@ -93,7 +95,7 @@ function buildTieredIssueList(
 const MODE_DESCRIPTIONS: Record<ReviseMode, string> = {
   auto: "", // auto mode uses buildAutoSystemPrompt instead
   polish: "润色：只改表达、节奏、段落呼吸，不改事实与剧情结论。禁止：增删段落、改变人名/地名/物品名、增加新情节或新对话、改变因果关系。只允许：替换用词、调整句序、修改标点节奏",
-  rewrite: "改写：允许重组问题段落、调整画面和叙述力度，但优先保留原文的绝大部分句段。除非问题跨越整章，否则禁止整章推倒重写；只能围绕问题段落及其直接上下文改写，同时保留核心事实与人物动机",
+  rewrite: "重写：当用户明确要求重写时，允许重新组织叙事结构、替换场景和对话、调整节奏和画面展现。如果改写任务包含用户给出的具体方向或新大纲（通过审稿意见传达），则按用户要求执行；如果用户没说具体方向，则以优化原文质量为前提，仍允许重组段落和替换表达。保留核心事实、人物性格和世界观设定，但不必保留原文句式。如果用户的要求与原文冲突，以用户要求为准。",
   rework: "重写：可重构场景推进和冲突组织，但不改主设定和大事件结果",
   "anti-detect": `反检测改写：在保持剧情不变的前提下，降低AI生成可检测性。
 
@@ -218,7 +220,9 @@ export class ReviserAgent extends BaseAgent {
 
     const autoOutputMode = mode === "auto" ? resolveAutoOutputMode(issues) : "allow-full";
     const systemPrompt = mode === "auto"
-      ? this.buildAutoSystemPrompt({ langPrefix, gp, protagonistBlock, numericalRule, lengthGuardrail, resolvedLanguage, lengthSpec: options?.lengthSpec, autoOutputMode })
+      ? (autoOutputMode === "humanity-enhance"
+        ? this.buildHumanityEnhanceSystemPrompt(resolvedLanguage)
+        : this.buildAutoSystemPrompt({ langPrefix, gp, protagonistBlock, numericalRule, lengthGuardrail, resolvedLanguage, lengthSpec: options?.lengthSpec, autoOutputMode }))
       : this.buildLegacySystemPrompt({ langPrefix, gp, protagonistBlock, numericalRule, lengthGuardrail, mode, resolvedLanguage });
 
     const ledgerBlock = gp.numericalSystem
@@ -266,7 +270,9 @@ export class ReviserAgent extends BaseAgent {
       ? `\n## 文风指南\n${styleGuide}`
       : "";
 
-    const userPrompt = `请修正第${chapterNumber}章。
+    const userPrompt = autoOutputMode === "humanity-enhance" && mode === "auto"
+      ? this.buildHumanityEnhanceUserPrompt(chapterContent, chapterNumber, issues, resolvedLanguage)
+      : `请修正第${chapterNumber}章。
 
 ## 审稿问题
 ${issueList}
@@ -354,7 +360,7 @@ ${chapterContent}`;
       .map((l) => l.trim())
       .filter((l) => l.length > 0);
 
-    const makeResult = (revisedContent: string, applied: boolean): ReviseOutput => ({
+    const makeResult = (revisedContent: string, applied: boolean, criticalFailure?: boolean): ReviseOutput => ({
       revisedContent,
       wordCount: revisedContent.length,
       fixedIssues: applied ? fixedIssues : [],
@@ -363,11 +369,21 @@ ${chapterContent}`;
         ? (extract("UPDATED_LEDGER") || "(账本未更新)")
         : "",
       updatedHooks: extract("UPDATED_HOOKS") || "(伏笔池未更新)",
+      criticalFailure: criticalFailure ?? false,
     });
 
     // Auto mode: route by issue type — structural issues require REVISED_CONTENT,
     // local-only issues only accept PATCHES, mixed sets accept either.
     if (mode === "auto") {
+      // ── humanity-enhance 模式：解析 REVISED_CONTENT（定点插入/替换后的完整正文） ──
+      if (autoOutputMode === "humanity-enhance") {
+        const revisedContent = extract("REVISED_CONTENT");
+        if (revisedContent) {
+          return makeResult(revisedContent, true);
+        }
+        return makeResult(originalChapter, false, true);
+      }
+
       if (autoOutputMode === "patch-only") {
         const patchesRaw = extract("PATCHES");
         if (patchesRaw) {
@@ -379,7 +395,7 @@ ${chapterContent}`;
             }
           }
         }
-        return makeResult(originalChapter, false);
+        return makeResult(originalChapter, false, true);
       }
 
       if (autoOutputMode === "rewrite-only") {
@@ -389,7 +405,7 @@ ${chapterContent}`;
         }
         // No rewrite produced — don't fall back to patches; structural issues
         // cannot be safely patched. Return original unchanged.
-        return makeResult(originalChapter, false);
+        return makeResult(originalChapter, false, true);
       }
 
       const revisedContent = extract("REVISED_CONTENT");
@@ -407,19 +423,19 @@ ${chapterContent}`;
         }
       }
       // Both empty — no fix
-      return makeResult(originalChapter, false);
+      return makeResult(originalChapter, false, true);
     }
 
     // Legacy spot-fix mode: patches only
     if (mode === "spot-fix") {
       const patches = parseSpotFixPatches(extract("PATCHES"));
       const patchResult = applySpotFixPatches(originalChapter, patches);
-      return makeResult(patchResult.revisedContent, patchResult.applied);
+      return makeResult(patchResult.revisedContent, patchResult.applied, !patchResult.applied);
     }
 
     // Legacy rewrite/polish/rework/anti-detect: full content
     const revisedContent = extract("REVISED_CONTENT");
-    return makeResult(revisedContent || originalChapter, revisedContent.length > 0);
+    return makeResult(revisedContent || originalChapter, revisedContent.length > 0, revisedContent.length === 0);
   }
 
   private buildAutoSystemPrompt(params: {
@@ -552,6 +568,20 @@ REPLACEMENT_TEXT:
 ${ledgerSection}
 === UPDATED_HOOKS ===
 (更新后的完整伏笔池)`;
+  }
+
+  // ── 真人感修复提示词 ──
+  private buildHumanityEnhanceSystemPrompt(language: "zh" | "en"): string {
+    return buildHumanityEnhanceSystemPrompt(language);
+  }
+
+  private buildHumanityEnhanceUserPrompt(
+    chapterContent: string,
+    chapterNumber: number,
+    issues: ReadonlyArray<AuditIssue>,
+    language: "zh" | "en",
+  ): string {
+    return buildHumanityEnhanceUserPrompt(chapterContent, chapterNumber, issues, language);
   }
 
   private buildLegacySystemPrompt(params: {
@@ -694,6 +724,13 @@ function resolveAutoOutputMode(issues: ReadonlyArray<AuditIssue>): AutoOutputMod
   if (issues.length === 0) {
     return "allow-full";
   }
+
+  // ── 真人感修复路由：当所有非 info 问题的 repairScope 都是 humanity-enhance 时，走真人感修复 ──
+  const blocking = issues.filter((issue) => issue.severity !== "info");
+  if (blocking.length > 0 && blocking.every((issue) => issue.repairScope === "humanity-enhance")) {
+    return "humanity-enhance";
+  }
+
   const scopedBlocking = issues.filter((issue) => issue.severity !== "info" && issue.repairScope);
   if (scopedBlocking.length > 0) {
     if (scopedBlocking.some((issue) => issue.repairScope === "structural")) {
@@ -718,7 +755,7 @@ function resolveAutoOutputMode(issues: ReadonlyArray<AuditIssue>): AutoOutputMod
 
   // Count blocking (critical + warning) structural vs local issues. Info-level
   // findings are reviewer hints for the Polisher — they do not drive routing.
-  const blocking = issues.filter((issue) => issue.severity !== "info");
+  // `blocking` was declared above for the humanity-enhance check; reuse it.
   if (blocking.length === 0) {
     return "patch-only"; // only hints / info — at most local polish
   }

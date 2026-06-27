@@ -1,10 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantMessage, Model, Api } from "@mariozechner/pi-ai";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   __resetFixedTemperatureWarnings,
   chatCompletion,
   type LLMClient,
 } from "../llm/provider.js";
+
+// 从 package.json 动态读取版本号，避免硬编码
+const { version: INKOS_VERSION } = JSON.parse(
+  readFileSync(join(__dirname, "../../package.json"), "utf-8"),
+);
 
 // ── Mock @mariozechner/pi-ai ──────────────────────────────────────────────────
 // We intercept streamSimple so tests don't hit the network.
@@ -248,7 +255,7 @@ describe("chatCompletion via pi-ai", () => {
     await chatCompletion(client, "test-model", [{ role: "user", content: "hi" }]);
 
     const opts = mockStreamSimple.mock.calls[0]?.[2] as { headers?: Record<string, string> };
-    expect(opts.headers).toMatchObject({ "User-Agent": "InkOS/1.3.5", "X-Valid": "ok" });
+    expect(opts.headers).toMatchObject({ "User-Agent": `InkOS/${INKOS_VERSION}`, "X-Valid": "ok" });
     expect(opts.headers).not.toHaveProperty("X-Bad");
   });
 

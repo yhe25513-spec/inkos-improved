@@ -697,7 +697,7 @@ function createAgentToolsForMode(params: {
     createPatchChapterTextTool(params.pipeline, params.projectRoot, params.bookId),
     createReplaceChapterTextTool(params.pipeline, params.projectRoot, params.bookId),
     createGrepTool(params.projectRoot),
-    createLsTool(params.projectRoot),
+    createLsTool(params.projectRoot, params.bookId),
   ];
 
   if (params.sessionKind === "edit") {

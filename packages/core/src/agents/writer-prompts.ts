@@ -8,6 +8,7 @@ import { buildLengthSpec } from "../utils/length-metrics.js";
 import type { WritingPreference } from "../learning/types.js";
 import { PromptEnhancer } from "../learning/prompt-enhancer.js";
 import { UserProfileManager } from "../learning/user-profile.js";
+import { ColdStartHandler } from "../learning/cold-start.js";
 
 export interface FanficContext {
   readonly fanficCanon: string;
@@ -33,6 +34,8 @@ export function buildWriterSystemPrompt(
   languageOverride?: "zh" | "en",
   inputProfile: "legacy" | "governed" = "legacy",
   lengthSpec?: LengthSpec,
+  roleConstraints?: string,
+  profileManager?: UserProfileManager,
 ): string {
   const isEnglish = (languageOverride ?? genreProfile.language) === "en";
   const governed = inputProfile === "governed";
@@ -48,6 +51,7 @@ export function buildWriterSystemPrompt(
 
   const sections = isEnglish
     ? [
+        roleConstraints ?? "",  // ← 角色圆桌约束（如有）
         buildEnglishGenreIntro(book, genreProfile),
         buildEnglishCoreRules(book),
         buildGovernedInputContract("en", governed),
@@ -68,10 +72,12 @@ export function buildWriterSystemPrompt(
         fanficContext ? buildCharacterVoiceProfiles(fanficContext.fanficCanon) : "",
         fanficContext ? buildFanficModeInstructions(fanficContext.fanficMode, fanficContext.allowedDeviations) : "",
         // Pre-write checklist moved to style_guide.md (v10)
-        buildUserPreferenceGuide(book.id, "en"),
+        buildUserPreferenceGuide(book.id, "en", profileManager, book.genre),
+        buildNarrativeProfileSection(bookRules?.narrativeProfile),
         outputSection,
       ]
     : [
+        roleConstraints ?? "",  // ← 角色圆桌约束（如有）
         buildGenreIntro(book, genreProfile),
         buildCoreRules(resolvedLengthSpec),
         buildGovernedInputContract("zh", governed),
@@ -94,7 +100,9 @@ export function buildWriterSystemPrompt(
         fanficContext ? buildCharacterVoiceProfiles(fanficContext.fanficCanon) : "",
         fanficContext ? buildFanficModeInstructions(fanficContext.fanficMode, fanficContext.allowedDeviations) : "",
         // 用户偏好指南
-        buildUserPreferenceGuide(book.id, "zh"),
+        buildUserPreferenceGuide(book.id, "zh", profileManager, book.genre),
+        // 叙事编排风格
+        buildNarrativeProfileSection(bookRules?.narrativeProfile),
         // Pre-write checklist moved to style_guide.md (v10)
         outputSection,
       ];
@@ -106,19 +114,35 @@ export function buildWriterSystemPrompt(
 // 用户偏好指南
 // ---------------------------------------------------------------------------
 
-function buildUserPreferenceGuide(bookId: string, language: "zh" | "en"): string {
+function buildUserPreferenceGuide(
+  bookId: string,
+  language: "zh" | "en",
+  profileManager?: UserProfileManager,
+  bookGenre?: string,
+): string {
   try {
-    const profileManager = new UserProfileManager();
-    const preference = profileManager.getPreference("default", bookId);
+    // 向后兼容：未传入 profileManager 时使用临时实例（无持久化，sampleSize=0）
+    const manager = profileManager ?? new UserProfileManager();
+    const preference = manager.getPreference("default", bookId);
 
-    if (!preference || preference.meta.sampleSize < 5) {
-      return ""; // 样本不足，不生成指南
+    let effectivePreference: WritingPreference;
+    if (preference.meta.sampleSize >= 5) {
+      // 样本充足，使用学习到的偏好
+      effectivePreference = preference;
+    } else if (bookGenre) {
+      // 样本不足：使用 ColdStartHandler 获取题材默认偏好，补全为完整 WritingPreference
+      const coldStart = new ColdStartHandler();
+      const genreDefault = coldStart.getGenreDefault(bookGenre);
+      effectivePreference = coldStart.mergeWithDefaults(genreDefault, bookGenre);
+    } else {
+      // 样本不足且无题材信息，返回空字符串（保持原行为）
+      return "";
     }
 
     const enhancer = new PromptEnhancer();
     return language === "en"
-      ? `\n## Personal Writing Style (Learned from Your Edits)\n\n${enhancer.generateStyleGuide(preference)}`
-      : `\n## 个人写作风格（根据您的编辑习惯学习）\n\n${enhancer.generateStyleGuide(preference)}`;
+      ? `\n## Personal Writing Style (Learned from Your Edits)\n\n${enhancer.generateStyleGuide(effectivePreference)}`
+      : `\n## 个人写作风格（根据您的编辑习惯学习）\n\n${enhancer.generateStyleGuide(effectivePreference)}`;
   } catch {
     return ""; // 加载失败不影响写作
   }
@@ -180,7 +204,8 @@ You will receive a chapter_memo composed of 7 markdown sections:
 - ## 日常/过渡承担什么任务 → function map for non-conflict passages ([passage location] → [function])
 - ## 关键抉择过三连问 → three-question check every key character choice must pass
 - ## 章尾必须发生的改变 → 1-3 concrete changes the ending must deliver (info / relation / physical / power)
-- ## 本章 hook 账 → **hard correspondence rule**: each hook_id listed under advance/resolve MUST have a **concretely locatable payoff scene** in the prose — explicit characters acting on or talking about a specific object/event/piece of information, with observable actions. No "sideways hints" or "deferred to next chapter". Example: if the memo says 'advance: H007 Huzi's IOU → planted → pressured', the prose must contain a scene where Lin Qiu actually touches / sees / picks up that specific IOU and does something. An inner mention like "he remembered the IOU was still in the drawer" does NOT count. Each advance/resolve payoff scene must be at least 60 chars. Entries under defer need no prose. Entries under open only need a natural new-hook seed near the chapter end
+- ## 本章 hook 账 → **hard correspondence rule**: each hook_id listed under advance/resolve MUST have a **concretely locatable payoff scene** in the prose — explicit characters acting on or talking about a specific object/event/piece of information, with observable actions. No "sideways hints" or "deferred to next chapter". Example: if the memo says 'advance: H007 Huzi's IOU → planted → pressured', the prose must contain a scene where Lin Qiu actually touches / sees / picks up that specific IOU and does something. An inner mention like "he remembered the IOU was still in the drawer" does NOT count. Each advance/resolve payoff scene must be at least 60 chars. Entries under defer need no prose. Entries under open only need a natural new-hook seed near the chapter end.
+  **【Phase 8 Callback Rule】**：If a hook in the ledger has seedText (original prose fragment when planted) and callbackFrom (chapters where it was recalled), the prose must contain a natural callback — not "he remembered the IOU" but a subtle echo of the seedText detail. Example: seedText="Huzi slapped the crumpled IOU onto the table" → callback sentence: "His fingertips traced idle circles on the tabletop — the board still bore the dent from Huzi's slap." If callbackFrom has ≥2 chapters, the callback can be more hidden (a glance, a pause, a tactile detail); if callbackFrom is empty, this is a "sleeping gun" — the callback must be more explicit to remind the reader.
 - ## 不要做 → hard prohibitions for this chapter
 
 Address each section in order when drafting the chapter. Every section must leave a visible trace in the prose — if a section is not reflected, the chapter is incomplete. **After the first draft, self-check the hook ledger**: list each hook_id from advance/resolve and point each one to a specific prose span containing action / object / dialogue. If you cannot point to one, go back and add it; do not submit a draft where the ledger lives in the memo but nowhere in the prose — review will flag the missing payoff and ask for a concrete scene.`;
@@ -196,7 +221,8 @@ Address each section in order when drafting the chapter. Every section must leav
 - ## 日常/过渡承担什么任务 → 非冲突段落的功能映射（[段落位置] → [承担功能]）
 - ## 关键抉择过三连问 → 关键人物选择必须过的检查
 - ## 章尾必须发生的改变 → 结尾落地的 1-3 条具体改变（信息/关系/物理/权力）
-- ## 本章 hook 账 → **硬对应规则**：advance/resolve 下面列出的每一个 hook_id 都必须在正文里有一个**具体可定位的兑现段**——写明人物对着什么物件/事件/信息做出什么可观察的动作或交谈。不允许"侧面暗示""留给下章"。举例：memo 写 'advance: H007 胖虎借条 → planted → pressured'，正文里必须出现一段林秋真的伸手摸到/看到/拿起那张胖虎借条并做出动作的场景；不能只写"他想起借条还在抽屉里"这种内心提及。每个 advance/resolve 的 hook 兑现段至少 60 字。defer 下的不用落，open 段只需要在章末附近安排一个自然引出的新悬念即可
+- ## 本章 hook 账 → **硬对应规则**：advance/resolve 下面列出的每一个 hook_id 都必须在正文里有一个**具体可定位的兑现段**——写明人物对着什么物件/事件/信息做出什么可观察的动作或交谈。不允许"侧面暗示""留给下章"。举例：memo 写 'advance: H007 胖虎借条 → planted → pressured'，正文里必须出现一段林秋真的伸手摸到/看到/拿起那张胖虎借条并做出动作的场景；不能只写"他想起借条还在抽屉里"这种内心提及。每个 advance/resolve 的 hook 兑现段至少 60 字。defer 下的不用落，open 段只需要在章末附近安排一个自然引出的新悬念即可。
+  **【Phase 8 回环呼应规则】**：如果 hook ledger 中某个 hook 带有 seedText（原始埋下时的原文片段）和 callbackFrom（中间被唤起过的章节），正文里必须有一处自然唤起——不是"他记得借条"这种直白内心独白，而是主角把 seedText 里的某个细节"顺手提一下"。示例：seedText="胖虎把皱巴巴的借条拍在桌上" → 正文回环句可以是"他的指尖在桌面上无意识地画了几圈——那桌板上还留着胖虎拍借条时的凹痕"。如果 callbackFrom 里已有 ≥2 个章节，回环句可以更隐蔽（一个眼神、一个停顿、一个物件的触感）；如果 callbackFrom 是空数组，说明这是一个"沉睡的 gun"——回环句必须更显眼，让读者被提醒。
 - ## 不要做 → 硬约束红线
 
 写作时按段落顺序落实，每一段都要在正文里有对应的兑现痕迹。如果某一段没有体现到正文里，本章不算完成。**写完初稿后自检一遍 hook 账**：把 advance 和 resolve 的 hook_id 列下来，对照正文，确认每一个都能指到一段带具体动作/物件/对话的 prose。如果指不到，回去补写；不要提交"账本在 memo 里、正文里没落"的稿子——审稿会标记缺口并要求补出具体场景。`;
@@ -237,8 +263,20 @@ function buildCoreRules(lengthSpec: LengthSpec): string {
 - 拒绝工具人：配角必须有独立动机和反击能力；主角的强大在于压服聪明人，而不是碾压傻子
 - 角色区分度：不同角色的说话语气、发怒方式、处事模式必须有显著差异
 - 情感/动机逻辑链：任何关系的改变（结盟、背叛、从属）都必须有铺垫和事件驱动
+- **角色必须有判断**：每章至少有一处，主角（或本章 POV 角色）对当前局势下了一个明确的判断——不是叙述者告诉你"他意识到危险"，而是他自己在台词、动作或内心独白里做出了判断（哪怕判断错了）。
+  - ✗ "他意识到情况不对。"（叙述者代劳）
+  - ✓ "不能再等了。"他把手机调成静音，塞回了口袋。（判断通过行动外化）
+  - ✓ "是陷阱。"他低声对自己说，脚步已经往后退。（判断通过极短台词直接给出）
 
 ## 叙事技法
+
+**【信息揭示铁律 — 硬约束】任何世界观/设定/背景信息必须附着在某个具体动作或对话上才能出现。**
+
+- ✗ "这个大陆上存在三种修炼体系，分别是灵、体、魂三类……"（整段 exposition）
+- ✓ "他把灵石按进凹槽——灵石上刻着'七阶以上方可驱动'，他才五阶。"（通过具体动作带出等级规则）
+- ✗ "故事发生在三百年前的世界。"
+- ✓ 让三百年前这个数字通过角色对话中的某个具体事件自然带出。
+- 自检：删掉这一段后，情节的下一步仍然成立，说明这段就是纯 exposition，可以删或改写。
 
 - Show, don't tell：用细节堆砌真实，用行动证明强大；角色的野心和价值观内化于行为，不通过口号喊出来
 - 五感代入法：场景描写中加入1-2种五感细节（视觉、听觉、嗅觉、触觉），增强画面感
@@ -496,6 +534,9 @@ function buildWritingCraftCard(language: "zh" | "en"): string {
 
   return `## 写作铁律
 
+- **【信息揭示铁律 — 硬约束】** 任何世界观/设定/背景信息必须附着在某个具体动作或对话上。禁止"这是一个……的世界"开头的整段信息揭示。
+  - ✗ "这个大陆上存在三种修炼体系……" → ✓ "他把灵石按进凹槽——灵石上刻着'七阶以上方可驱动'，他才五阶。"
+  - ✗ "故事发生在三百年前的世界。" → ✓ 让三百年前这个数字通过角色对话中的某个具体事件自然带出。
 - **情绪**：用动作外化，不写"他感到愤怒"，写"他捏碎了茶杯，滚烫的茶水流过指缝"
 - **盐溶于汤**：价值观通过行为传达，不喊口号
 - **配角**：有自己的算盘和反击，主角压服聪明人不是碾压傻子
@@ -732,11 +773,19 @@ function buildProseExecutionRules(language: "zh" | "en"): string {
   if (language === "en") {
     return `## Prose execution (cross-theme failure modes)
 
+**Sentence rhythm.** One sentence, one breath. Mix short and long sentences — don't write 5+ sentences in a row of nearly identical 12-18 word length; that's a metronome and readers will drift. Every ~500 words, deliberately drop one sentence of ≤5 words as a standalone paragraph — a "short-bomb sentence" that gives the reader a beat of silence. After a short-bomb, the next paragraph must be a normal-length narrative paragraph that regathers the action.
+- ✗ He walked into the room. It was dark. He saw a table. There was something on it. It looked strange. (5 sentences, all 7-10 words — metronome)
+- ✓ He walked into the room. A stale odor from deep inside rushed out, mixed with old paper, wax, and something rotting, sweet and cloying, making him step back. Table. (Normal — long sentence — short-bomb — rhythm has peaks and valleys)
+
 **Simile restraint.** Do not lean on "like / as if / as though" as a default device. At most one simile per scene, and only when it lights the image up better than plain rendering would. Priority is always: a precise verb > a concrete action or sensory detail > direct description > simile. Before reaching for "like…", check whether an exact verb or a concrete action would hit harder.
 
 **Play out the climax — never summarize it.** This chapter's high-density / high-stakes beats — a conflict erupting, life-or-death, a major turn, a reveal, an action climax — MUST be played out beat by beat (action, dialogue, the senses, pauses, pacing). Never compress them into "then he saved them, the police came, the antagonist was arrested." When a chapter packs several major events, expand the single most important one into a full scene; connective tissue may be compressed, but the key beat must never decay into a summary. The tighter the chapter, the harder this holds — if you are short on words, pack fewer events, do not render the climax as a synopsis.`;
   }
   return `## 文笔执行（跨题材通病纠正）
+
+**句子级节奏。** 一句话就是一个呼吸。长短句交替写，不要连续 5 句都是 12-18 字的均匀长度——那是节拍器，读者会走神。每写 500 字，故意放一句 ≤12 字的短句独立成段——给读者一个"重击"。短句子炸弹用过一次后，下一句必须是 ≥40 字的叙事段落把节奏接回来。
+- ✗ 他推门走进去。房间里很暗。他看到了桌子。桌子上有东西。东西看起来很奇怪。（5 句全是 7-10 字，节拍器）
+- ✓ 他推门走进去。一股陈腐的气味从屋子深处涌出来，混着旧纸、蜡、和什么东西腐烂的甜腥气，呛得他往后退了半步。桌。（正常-长句-短句子炸弹——节奏有起伏）
 
 **明喻节制。** 不要把"像/仿佛/如同/像……一样"当默认修辞反复用。每个场景明喻最多 1 处，且只在它真能点亮画面、比直写更准时才用。优先级永远是：精确的动词 > 具体的动作或感官细节 > 直接描写 > 明喻。想写"像……"之前，先问一句：换成一个准确的动词或一个具体动作，是不是更狠。
 
@@ -815,9 +864,11 @@ function buildPreWriteChecklist(book: BookConfig, gp: GenreProfile): string {
     "",
     `${idx++}. 【大纲锚定】本章对应卷纲中的哪个节点/阶段？本章必须推进该节点的剧情，不得跳过或提前消耗后续节点。如果卷纲指定了章节范围，严格遵守节奏。`,
     `${idx++}. 主角此刻利益最大化的选择是什么？`,
+    `${idx++}. 【信息揭示检查】本章是否有整段背景介绍/世界观说明？如有，删掉整段，把信息重新附着到动作或对话上。任何世界观/设定/背景信息必须附着在具体动作或对话上。`,
     `${idx++}. 这场冲突是谁先动手，为什么非做不可？`,
     `${idx++}. 配角/反派是否有明确诉求、恐惧和反制？行为是否由"过往经历+当前利益+性格底色"驱动？`,
     `${idx++}. 反派当前掌握了哪些已知信息？哪些信息只有读者知道？有无信息越界？`,
+    `${idx++}. 【角色判断检查】本章主角对当前局势下了明确判断吗？如果整章读完，读者说不出"主角认为当前情况是怎样的"，那就缺了判断层——补一句极短的判断台词或一个判断性的动作。`,
     `${idx++}. 章尾是否留了钩子（悬念/伏笔/冲突升级）？`,
   ];
 
@@ -938,7 +989,12 @@ ${postSettlement}
 (更新后的完整状态卡，Markdown表格格式)
 ${updatedLedger}
 === UPDATED_HOOKS ===
-(更新后的完整伏笔池，Markdown表格格式)
+(更新后的完整伏笔池，Markdown表格格式。**Phase 8 新增字段**：当新埋一个 hook 时，必须同时填写 seed_text 字段——即 hook 埋下时的原文片段（≤80字），用于后续章节回环呼应。格式示例：)
+| HookID | 类型 | 状态 | 起始章 | 最后推进章 | 预期兑现 | seed_text | 备注 |
+|--------|------|------|--------|------------|----------|-----------|------|
+| H007 | 物件 | open | 3 | 3 | 第10章兑现 | 胖虎把皱巴巴的借条拍在桌上 | 借条是核心道具 |
+| H012 | 信息 | open | 5 | 5 | 第15章兑现 | 玄关鞋架上多了一双陌生的黑色女鞋 | 暗示有人来过 |
+(seed_text 填写规则：必须是正文里实际出现的那段文字，不超过80字；如果是推进已有 hook，seed_text 留空或写"已有")
 
 === CHAPTER_SUMMARY ===
 (本章摘要，Markdown表格格式，必须包含以下列)
@@ -1081,4 +1137,72 @@ ${updatedLedger}
 - **Relations**: Character (relationship / Ch#) | ...
 - **Knows**: what this character knows (only what they witnessed or were told)
 - **Unknown**: what this character does not know`;
+}
+
+// ---------------------------------------------------------------------------
+// 叙事编排风格
+// ---------------------------------------------------------------------------
+
+function buildNarrativeProfileSection(profileId?: string): string {
+  if (!profileId) return "";
+
+  const profiles: Record<string, string> = {
+    classic: `## 叙事风格：经典叙事
+
+**风格特点**：
+- 战斗：节奏紧凑，短句为主，动作描写直接有力
+- 修炼：意境描写，内心独白，感官细节丰富
+- 对话：对白自然，潜台词丰富，通过对话展现性格
+- 探索：环境描写细腻，悬念设置巧妙，逐步揭示
+- 日常：生活细节丰富，角色互动自然，伏笔埋设
+
+**节奏控制**：
+- 紧张场景：短句+动作+感官细节
+- 舒缓场景：长句+环境+内心描写
+- 过渡场景：对话+互动+伏笔埋设`,
+
+    "dark-fantasy": `## 叙事风格：黑暗奇幻
+
+**风格特点**：
+- 战斗：血腥残酷，代价沉重，没有轻松的胜利
+- 修炼：黑暗仪式，代价描写，力量与腐败的平衡
+- 对话：暗藏机锋，信任稀缺，每句话都有目的
+- 探索：环境描写阴暗，恐怖元素渗透，未知即危险
+- 日常：短暂的宁静，暗示更大的威胁，角色内心挣扎
+
+**节奏控制**：
+- 整体基调：压抑、沉重、危机四伏
+- 代价强调：每次获得都有相应代价
+- 信任稀缺：角色间充满猜忌与防备`,
+
+    cinematic: `## 叙事风格：电影风格
+
+**风格特点**：
+- 战斗：镜头感强，画面切换快，动作特写与全景交替
+- 修炼：视觉化描写，能量流动可见，突破时刻戏剧化
+- 对话：场景切换频繁，特写表情描写，环境烘托情绪
+- 探索：航拍视角，环境全景，发现时刻视觉冲击
+- 日常：蒙太奇手法，时间跳跃，细节特写
+
+**节奏控制**：
+- 画面感优先：每个场景都有视觉焦点
+- 节奏剪辑：紧张时快切，舒缓时慢镜头
+- 戏剧化处理：关键时刻放大情绪张力`,
+
+    minimalist: `## 叙事风格：极简风格
+
+**风格特点**：
+- 战斗：简洁有力，动作精准，结果暗示过程
+- 修炼：意境留白，感悟式描写，少即是多
+- 对话：对白精炼，潜台词丰富，沉默即表达
+- 探索：环境描写精简，重点突出，暗示多于描述
+- 日常：生活细节精选，一个动作胜过千言
+
+**节奏控制**：
+- 留白艺术：不说的比说的更重要
+- 精准打击：每个词都有存在意义
+- 克制表达：情绪通过行为暗示，而非直接描述`,
+  };
+
+  return profiles[profileId] ?? "";
 }

@@ -1,12 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { PolicyEngine } from "../compliance/policy-engine.js";
 import { PerplexityAnalyzer } from "../anti-ai/perplexity-analyzer.js";
 import { SentenceReconstructor } from "../anti-ai/sentence-reconstructor.js";
 import { EmotionAnalyzer } from "../emotional/emotion-analyzer.js";
 import { ArcPlanner } from "../emotional/arc-planner.js";
 import { EmotionInjector } from "../emotional/injector.js";
-import { TropeDetector } from "../creativity/trope-detector.js";
-import { OriginalityScorer } from "../creativity/originality-scorer.js";
 import { ForeshadowTracker } from "../consistency/foreshadow-tracker.js";
 import { CharacterStateSync } from "../consistency/character-state-sync.js";
 import { TimelineManager } from "../consistency/timeline-manager.js";
@@ -17,67 +14,6 @@ import { UserProfileManager } from "../learning/user-profile.js";
 import { PromptEnhancer } from "../learning/prompt-enhancer.js";
 
 describe("Integration: Complete Writing Workflow", () => {
-  it("should handle complete book creation workflow", async () => {
-    // 1. 设置合规系统
-    const policyEngine = new PolicyEngine();
-    const qidianPolicy = policyEngine.getPolicy("qidian");
-    expect(qidianPolicy.aiDisclosureRequired).toBe(true);
-
-    // 2. 创建书籍并设置情感曲线
-    const arcPlanner = new ArcPlanner();
-    const arc = arcPlanner.planArc("book-001", {
-      totalChapters: 20,
-      actBreaks: [5, 10, 15],
-      climaxChapter: 15,
-      resolutionChapter: 20,
-      theme: "都市成长",
-    }, "urban");
-    expect(arc.chapters).toHaveLength(20);
-
-    // 3. 检测初始文本的AI特征
-    const aiText = "他走进了房间，看到了桌子上的书。他拿起书，翻开了第一页。";
-    const analyzer = new PerplexityAnalyzer();
-    const analysis = analyzer.analyze(aiText);
-    expect(analysis.perplexity).toBeGreaterThan(0);
-
-    // 4. 重构文本去除AI特征
-    const reconstructor = new SentenceReconstructor();
-    const reconstructed = await reconstructor.reconstruct(aiText, {
-      genre: "urban",
-      intensity: 5,
-    });
-    expect(reconstructed).toBeTruthy();
-
-    // 5. 分析情感
-    const emotionAnalyzer = new EmotionAnalyzer();
-    const emotion = emotionAnalyzer.analyze(reconstructed);
-    expect(emotion.primaryEmotion).toBeTruthy();
-
-    // 6. 注入情感
-    const injector = new EmotionInjector();
-    const enhanced = await injector.enhanceChapter(reconstructed, arc, 1);
-    expect(enhanced).toBeTruthy();
-
-    // 7. 检测套路
-    const tropeDetector = new TropeDetector();
-    const tropes = tropeDetector.detect(enhanced);
-    expect(tropes.overallOriginality).toBeGreaterThan(0);
-
-    // 8. 评分原创性
-    const scorer = new OriginalityScorer();
-    const originality = scorer.score(enhanced, "urban");
-    expect(originality.score).toBeGreaterThan(0);
-
-    // 9. 检查合规性
-    const report = policyEngine.evaluate(
-      "book-001",
-      "qidian",
-      [{ number: 1, aiPercentage: 0.2, hasAiLabel: false }],
-      [{ detector: "GPTZero", isAIGenerated: false, confidence: 0.8 }],
-    );
-    expect(report.passed).toBe(false); // 缺少AI标识
-  });
-
   it("should handle user preference learning workflow", async () => {
     // 1. 创建编辑追踪器（大批次避免自动刷新）
     const tracker = new EditTracker({ batchSize: 100 });

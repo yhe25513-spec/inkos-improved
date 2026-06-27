@@ -3,17 +3,41 @@
 
 import type { EditType, EditContext, UserEdit } from "./types.js";
 
+/** 持久化存储适配器（可选） */
+export interface EditTrackerStorage {
+  read: () => Promise<UserEdit[]>;
+  write: (edits: UserEdit[]) => Promise<void>;
+}
+
 /**
  * 编辑追踪器
  * 负责记录用户编辑操作，并在积累足够样本后触发偏好分析
  */
 export class EditTracker {
-  private batchSize: number;
+  /** 批量处理阈值（public，供外部读取） */
+  readonly batchSize: number;
   private editBuffer: UserEdit[] = [];
   private onBatchReady?: (userId: string, bookId: string) => Promise<void>;
+  private storage?: EditTrackerStorage;
 
-  constructor(options?: { batchSize?: number }) {
+  constructor(options?: { batchSize?: number; storage?: EditTrackerStorage }) {
     this.batchSize = options?.batchSize ?? 10;
+    this.storage = options?.storage;
+  }
+
+  /**
+   * 初始化：如果配置了 storage，从持久化存储加载已有编辑到缓冲区
+   */
+  async init(): Promise<void> {
+    if (!this.storage) return;
+    try {
+      const persisted = await this.storage.read();
+      if (persisted && persisted.length > 0) {
+        this.editBuffer = persisted;
+      }
+    } catch {
+      // 加载失败不影响功能，从空缓冲区开始
+    }
   }
 
   /**
@@ -34,6 +58,11 @@ export class EditTracker {
     };
 
     this.editBuffer.push(fullEdit);
+
+    // 持久化（如果配置了 storage）
+    if (this.storage) {
+      this.storage.write(this.editBuffer).catch(() => undefined);
+    }
 
     // 达到批量大小时触发分析
     if (this.editBuffer.length >= this.batchSize) {
@@ -62,6 +91,11 @@ export class EditTracker {
    */
   clearBuffer(): void {
     this.editBuffer = [];
+
+    // 持久化空数组（如果配置了 storage）
+    if (this.storage) {
+      this.storage.write([]).catch(() => undefined);
+    }
   }
 
   /**
@@ -121,8 +155,14 @@ export class EditTracker {
   private async flushBuffer(): Promise<void> {
     if (this.editBuffer.length === 0) return;
 
+    // 先保存当前 buffer 引用，再清空，再回调——避免回调内读取缓冲区时数据已丢失
     const edits = [...this.editBuffer];
     this.editBuffer = [];
+
+    // 持久化清空后的缓冲区（如果配置了 storage）
+    if (this.storage) {
+      await this.storage.write([]).catch(() => undefined);
+    }
 
     if (edits.length > 0 && this.onBatchReady) {
       const userId = edits[0].userId;

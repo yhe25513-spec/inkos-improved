@@ -40,6 +40,10 @@ export const BookRulesSchema = z.object({
   enableFullCastTracking: z.boolean().default(false),
   fanficMode: z.enum(["canon", "au", "ooc", "cp"]).optional(),
   allowedDeviations: z.array(z.string()).default([]),
+  /** 禁用角色圆桌讨论（默认 false，即启用圆桌） */
+  disableRoundtable: z.boolean().default(false),
+  /** 叙事编排配置 ID（如 "classic", "dark-fantasy" 等） */
+  narrativeProfile: z.string().optional(),
 });
 
 export type BookRules = z.infer<typeof BookRulesSchema>;

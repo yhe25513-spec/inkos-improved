@@ -8,16 +8,19 @@ import type { GenreProfile } from "../models/genre-profile.js";
 import { ArchitectAgent, type ArchitectOutput } from "../agents/architect.js";
 import { FoundationReviewerAgent } from "../agents/foundation-reviewer.js";
 import { PlannerAgent, type PlanChapterOutput } from "../agents/planner.js";
+import { GroupPlannerAgent, type PlanGroupOutput } from "../agents/group-planner.js";
 import { ComposerAgent, composeGovernedChapter, contextBudgetFromClient, type ComposeChapterOutput } from "../agents/composer.js";
 import { WriterAgent, type WriteChapterInput, type WriteChapterOutput } from "../agents/writer.js";
 import { LengthNormalizerAgent } from "../agents/length-normalizer.js";
 import { ChapterAnalyzerAgent } from "../agents/chapter-analyzer.js";
 import { ContinuityAuditor } from "../agents/continuity.js";
+import { HumanityAuditor } from "../agents/humanity-auditor.js";
 import { ReviserAgent, DEFAULT_REVISE_MODE, type ReviseMode } from "../agents/reviser.js";
 import { EditTracker } from "../learning/edit-tracker.js";
 import { PreferenceAnalyzer } from "../learning/preference-analyzer.js";
 import { UserProfileManager } from "../learning/user-profile.js";
 import { PromptEnhancer } from "../learning/prompt-enhancer.js";
+import type { UserEdit, WritingPreference } from "../learning/types.js";
 import { StateValidatorAgent, type ValidationResult, type ValidationWarning } from "../agents/state-validator.js";
 import { RadarAgent } from "../agents/radar.js";
 import type { RadarSource } from "../agents/radar-source.js";
@@ -56,6 +59,28 @@ import { persistChapterArtifacts } from "./chapter-persistence.js";
 import { runChapterReviewCycle } from "./chapter-review-cycle.js";
 import { validateChapterTruthPersistence } from "./chapter-truth-validation.js";
 import { loadPersistedPlan, relativeToBookDir, savePersistedPlan } from "./persisted-governed-plan.js";
+import { CharacterRoundtable, type RoundtableInput, type RoundtableResult } from "../agents/character-roundtable.js";
+import { EntityExtractor } from "../agents/entity-extractor.js";
+import {
+  loadCharacterVoices,
+  entitiesToCharacterVoices,
+  parseRoleCardsToVoices,
+  type CharacterVoicesFile,
+  type CharacterVoice,
+} from "../utils/character-voices.js";
+import { parseBookRules } from "../models/book-rules.js";
+import { InfoBoundaryChecker, type InfoBoundaryReport } from "../utils/info-boundary.js";
+import { EntityDB } from "../state/entity-db.js";
+import type { Entity } from "../models/entity.js";
+// ── Phase 4+5: 真人感 / 去 AI 味 / 情感注入 模块接入 ──
+import { HumanityEngine } from "../humanity/humanity-engine.js";
+import { loadOrCreateHumanityProfile } from "../humanity/profile-initializer.js";
+import type { WritingContext } from "../models/humanity-profile.js";
+import { Humanizer } from "../anti-ai/humanizer.js";
+import { BurstinessAdjuster } from "../anti-ai/burstiness-adjuster.js";
+import { EmotionInjector } from "../emotional/injector.js";
+import { parseEmotionFromArcsFile } from "../emotional/arc-parser.js";
+import type { EmotionalArc } from "../emotional/types.js";
 
 const SEQUENCE_LEVEL_CATEGORIES = new Set([
   "Pacing Monotony", "节奏单调",
@@ -83,6 +108,107 @@ const DEFAULT_IMPORT_CHAPTER_EXCERPT_CHARS = 6_000;
 const DEFAULT_IMPORT_TITLE_CATALOG_CHARS = 24_000;
 const DEFAULT_IMPORT_EDGE_CHAPTER_COUNT = 4;
 const DEFAULT_IMPORT_MIDDLE_ANCHOR_COUNT = 8;
+
+/**
+ * 从多个来源尝试读取角色数据
+ * 优先级：character_voices.json > entities.db (SQLite) > 从 story_bible.md / recent chapters 提取
+ */
+async function loadActiveCharacters(bookDir: string, logger?: Logger): Promise<Record<string, CharacterVoice>> {
+  // 1. 尝试从 character_voices.json 加载（最优先）
+  try {
+    const voicesFile = await loadCharacterVoices(bookDir);
+    if (voicesFile && Object.keys(voicesFile.characters).length > 0) {
+      logger?.info(`[roundtable] 从 character_voices.json 加载了 ${Object.keys(voicesFile.characters).length} 个角色`);
+      return voicesFile.characters;
+    }
+  } catch (err) {
+    logger?.debug(`[roundtable] character_voices.json 读取失败: ${err}`);
+  }
+
+  // 2. 尝试从 story/roles/*.md 的角色卡加载（新建的书优先落到这里）
+  try {
+    const fromRoles = await parseRoleCardsToVoices(bookDir);
+    if (Object.keys(fromRoles).length > 0) {
+      logger?.info(`[roundtable] 从 story/roles/ 加载了 ${Object.keys(fromRoles).length} 个角色`);
+      return fromRoles;
+    }
+  } catch (err) {
+    logger?.debug(`[roundtable] story/roles/ 读取失败: ${err}`);
+  }
+
+  // 3. 尝试从 entities.db (SQLite) 加载
+  try {
+    const entityDB = new EntityDB(bookDir);
+    const entities = entityDB.getActiveCharacters();
+    entityDB.close();
+    if (entities.length > 0) {
+      logger?.info(`[roundtable] 从 entities.db 加载了 ${entities.length} 个角色`);
+      return entitiesToCharacterVoices(entities);
+    }
+  } catch (err) {
+    logger?.warn(`[roundtable] entities.db 读取失败: ${err}`);
+  }
+
+  // 3. 尝试从 memory.db (memory-db) 加载角色
+  try {
+    const memoryDB = new MemoryDB(bookDir);
+    const characters = memoryDB.listCharacters();
+    if (characters && characters.length > 0) {
+      logger?.info(`[roundtable] 从 memory.db 加载了 ${characters.length} 个角色`);
+      // 转换为 CharacterVoice 格式
+      const voices: Record<string, CharacterVoice> = {};
+      for (const c of characters) {
+        voices[c as unknown as string] = {
+          name: c as unknown as string,
+          speechStyle: "正常对话",
+          forbiddenTone: [],
+          vocabulary: [],
+          personality: [],
+          emotionalExpression: "通过动作和对话表达情绪",
+          sampleDialogues: [],
+          infoBoundary: [],
+        };
+      }
+      return voices;
+    }
+  } catch (err) {
+    logger?.debug(`[roundtable] memory.db 读取失败: ${err}`);
+  }
+
+  // 4. 从 story_bible.md 尝试提取角色名
+  try {
+    const bibleContent = await readFile(join(bookDir, "story", "story_bible.md"), "utf-8").catch(() => "");
+    if (bibleContent.length > 100) {
+      // 简单提取：查找"角色"或"人物"章节下的名字
+      const characterSection = bibleContent.match(/(?:角色|人物|Character)[\s\S]{1,1000}/i);
+      if (characterSection) {
+        const names = characterSection[0].match(/[\u4e00-\u9fa5]{2,4}/g) ?? [];
+        if (names.length > 0) {
+          const voices: Record<string, CharacterVoice> = {};
+          for (const name of names.slice(0, 8)) {
+            voices[name] = {
+              name,
+              speechStyle: "正常对话",
+              forbiddenTone: [],
+              vocabulary: [],
+              personality: [],
+              emotionalExpression: "通过动作和对话表达情绪",
+              sampleDialogues: [],
+              infoBoundary: [],
+            };
+          }
+          logger?.info(`[roundtable] 从 story_bible.md 提取了 ${Object.keys(voices).length} 个角色`);
+          return voices;
+        }
+      }
+    }
+  } catch (err) {
+    logger?.debug(`[roundtable] story_bible.md 读取失败: ${err}`);
+  }
+
+  logger?.warn(`[roundtable] 未找到任何角色数据，跳过圆桌讨论`);
+  return {};
+}
 
 function formatImportedChapter(
   chapter: { readonly title: string; readonly content: string },
@@ -310,10 +436,28 @@ export interface PlanChapterResult {
   readonly conflicts: ReadonlyArray<string>;
 }
 
+export interface DeleteChapterResult {
+  readonly bookId: string;
+  readonly chapterNumber: number;
+  readonly deletedFile: string;
+  readonly runtimeFilesDeleted: number;
+  readonly snapshotDeleted: boolean;
+  readonly note: string;
+}
+
 export interface ComposeChapterResult extends PlanChapterResult {
   readonly contextPath: string;
   readonly ruleStackPath: string;
   readonly tracePath: string;
+}
+
+export interface PlanGroupResult {
+  readonly bookId: string;
+  readonly groupNumber: number;
+  readonly startChapter: number;
+  readonly endChapter: number;
+  readonly goal: string;
+  readonly intentPath: string;
 }
 
 export interface ReviseResult {
@@ -383,10 +527,99 @@ export class PipelineRunner {
   private readonly config: PipelineConfig;
   private readonly agentClients = new Map<string, LLMClient>();
   private memoryIndexFallbackWarned = false;
+  // ── 用户偏好学习：按 bookId 缓存带持久化的实例，避免每次 reviseDraft 重新 new ──
+  private readonly editTrackers = new Map<string, EditTracker>();
+  private readonly profileManagers = new Map<string, UserProfileManager>();
+  // ── Phase 4: 真人感引擎（使用默认 profile，单例复用） ──
+  private readonly humanityEngine: HumanityEngine;
+  // ── Phase 8: 按书籍加载真人感画像，避免重复初始化 ──
+  private readonly humanityProfilesLoaded = new Set<string>();
 
   constructor(config: PipelineConfig) {
     this.config = config;
     this.state = new StateManager(config.projectRoot);
+    // 初始化真人感引擎（使用默认 profile，后续可按需 updateProfile）
+    this.humanityEngine = new HumanityEngine();
+  }
+
+  /**
+   * 获取（或创建）指定书籍的 EditTracker 实例
+   * 持久化路径：<bookDir>/.inkos/learning/edit_log.json
+   */
+  private getEditTracker(bookId: string): EditTracker {
+    let tracker = this.editTrackers.get(bookId);
+    if (!tracker) {
+      const editLogRelPath = `books/${bookId}/.inkos/learning/edit_log.json`;
+      tracker = new EditTracker({
+        storage: {
+          read: async (): Promise<UserEdit[]> => {
+            const data = await this.state.readJSON<UserEdit[]>(editLogRelPath);
+            return data ?? [];
+          },
+          write: (edits: UserEdit[]) => this.state.writeJSON(editLogRelPath, edits),
+        },
+      });
+      // init 是 async 的，首次创建时触发加载（不阻塞调用方）
+      tracker.init().catch(() => undefined);
+      this.editTrackers.set(bookId, tracker);
+    }
+    return tracker;
+  }
+
+  /**
+   * 获取（或创建）指定书籍的 UserProfileManager 实例
+   * 持久化路径：<bookDir>/.inkos/learning/preferences.json
+   */
+  private getProfileManager(bookId: string): UserProfileManager {
+    let manager = this.profileManagers.get(bookId);
+    if (!manager) {
+      const prefsRelPath = `books/${bookId}/.inkos/learning/preferences.json`;
+      manager = new UserProfileManager({
+        read: async (): Promise<Record<string, WritingPreference>> => {
+          const data = await this.state.readJSON<Record<string, WritingPreference>>(prefsRelPath);
+          return data ?? {};
+        },
+        write: (data: Record<string, WritingPreference>) => this.state.writeJSON(prefsRelPath, data),
+      });
+      manager.init().catch(() => undefined);
+      this.profileManagers.set(bookId, manager);
+    }
+    return manager;
+  }
+
+  /**
+   * 确保真人感引擎已为指定书籍加载画像（首次调用时加载，后续跳过）。
+   * - 优先从 books/<bookId>/.inkos/humanity_profile.json 加载已存画像
+   * - 若配置了 humanitySamplesDir，从样本目录提取指纹并持久化
+   * - 失败时优雅降级到默认画像，不阻断写作
+   */
+  private async ensureHumanityEngineReady(bookId: string, bookConfig: BookConfig): Promise<void> {
+    if (this.humanityProfilesLoaded.has(bookId)) return;
+    this.humanityProfilesLoaded.add(bookId);
+
+    const profileRelPath = `books/${bookId}/.inkos/humanity_profile.json`;
+    const profileAbsPath = join(this.config.projectRoot, profileRelPath);
+
+    try {
+      const profile = await loadOrCreateHumanityProfile(profileAbsPath);
+
+      const samplesDir = bookConfig.humanitySamplesDir
+        ? join(this.config.projectRoot, bookConfig.humanitySamplesDir)
+        : undefined;
+
+      if (samplesDir) {
+        const { initializeHumanityProfileFromSamples } = await import("../humanity/profile-initializer.js");
+        const derivedProfile = await initializeHumanityProfileFromSamples(samplesDir, profileAbsPath);
+        this.humanityEngine.updateProfile(derivedProfile);
+        this.config.logger?.info(`[humanity] 从样本目录 ${samplesDir} 初始化画像成功`);
+      } else {
+        this.humanityEngine.updateProfile(profile);
+        this.config.logger?.info(`[humanity] 加载已有画像（无样本目录，使用默认或已存画像）`);
+      }
+    } catch (e) {
+      this.config.logger?.warn(`[humanity] 画像初始化失败，使用默认画像: ${e}`);
+      // 失败时保持默认画像，不阻断写作
+    }
   }
 
   private localize(language: LengthLanguage, messages: { zh: string; en: string }): string {
@@ -1020,6 +1253,32 @@ export class PipelineRunner {
       const book = await this.state.loadBookConfig(bookId);
       const bookDir = this.state.bookDir(bookId);
       const chapterNumber = await this.state.getNextChapterNumber(bookId);
+
+      // 验证所有前序章节是否已正确完成（检查 index 和文件）
+      const chapterIndexForValidation = await this.state.loadChapterIndex(bookId);
+      const chaptersDirForValidation = join(bookDir, "chapters");
+      let chapterFilesForValidation: string[] = [];
+      try {
+        chapterFilesForValidation = await readdir(chaptersDirForValidation);
+      } catch {
+        // ignore
+      }
+      const missingChapters: number[] = [];
+      for (let i = 1; i < chapterNumber; i++) {
+        const inIndex = chapterIndexForValidation.some((ch) => ch.number === i);
+        const hasFile = chapterFilesForValidation.some((f) => f.match(new RegExp(`^${String(i).padStart(4, "0")}_.*\\.md$`)));
+        if (!inIndex && !hasFile) {
+          missingChapters.push(i);
+        }
+      }
+      if (missingChapters.length > 0) {
+        const missingList = missingChapters.join(", ");
+        throw new Error(
+          `无法写第${chapterNumber}章：以下章节尚未写入，请先完成它们：第${missingList}章。` +
+          `\nCannot write chapter ${chapterNumber}: the following chapters are missing. Please write them first: chapters ${missingList}.`
+        );
+      }
+
       const stageLanguage = await this.resolveBookLanguage(book);
       this.logStage(stageLanguage, { zh: "准备章节输入", en: "preparing chapter inputs" });
       const writeInput = await this.prepareWriteInput(
@@ -1028,12 +1287,42 @@ export class PipelineRunner {
         chapterNumber,
         context ?? this.config.externalContext,
       );
+      // Phase 8: 首次写章节时加载/创建真人感画像（失败时优雅降级到默认画像）
+      await this.ensureHumanityEngineReady(bookId, book);
 
       const { profile: gp } = await this.loadGenreProfile(book.genre);
       const lengthSpec = buildLengthSpec(
         wordCount ?? book.chapterWordCount,
         book.language ?? gp.language,
       );
+
+      // 0. Pre-write roundtable: 让每个登场角色从自身视角审视本章
+      let roleConstraints: string | undefined = undefined;
+      try {
+        const bookRulesRaw = await readFile(join(bookDir, "story", "book_rules.md"), "utf-8").catch(() => "");
+        const parsedRules = bookRulesRaw ? parseBookRules(bookRulesRaw) : null;
+        if (!parsedRules?.rules.disableRoundtable) {
+          // 从多数据源加载角色：character_voices.json > entities.db > memory.db > story_bible.md 提取
+          const activeCharacters = await loadActiveCharacters(bookDir, this.config.logger);
+          const characterCount = Object.keys(activeCharacters).length;
+          if (characterCount > 0) {
+            this.config.logger?.info(`[roundtable] 第 ${chapterNumber} 章开始角色圆桌讨论，${characterCount} 个角色参与`);
+            const roundtable = new CharacterRoundtable(this.agentCtxFor("roundtable", bookId));
+            const roundtableResult = await roundtable.discuss({
+              chapterNumber,
+              chapterMemo: writeInput.chapterMemo?.body ?? "",
+              chapterIntent: writeInput.chapterIntent ?? "",
+              characters: activeCharacters,
+              currentContext: writeInput.externalContext ?? "",
+              maxCharacters: 4,
+            });
+            roleConstraints = roundtableResult.constraintsBlock;
+            this.config.logger?.info(`[roundtable] 第 ${chapterNumber} 章讨论完成，约束块长度 ${roleConstraints.length} 字符`);
+          }
+        }
+      } catch (err) {
+        this.config.logger?.warn(`[roundtable] 角色圆桌讨论失败，跳过: ${err}`);
+      }
 
       const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
       this.logStage(stageLanguage, { zh: "撰写章节草稿", en: "writing chapter draft" });
@@ -1044,6 +1333,9 @@ export class PipelineRunner {
         ...writeInput,
         lengthSpec,
         ...(wordCount ? { wordCountOverride: wordCount } : {}),
+        ...(roleConstraints ? { roleConstraints } : {}),
+        profileManager: this.getProfileManager(bookId),
+        humanityEngine: this.humanityEngine,
       });
       const writerCount = countChapterLength(output.content, lengthSpec.countingMode);
       let totalUsage: TokenUsageSummary = output.tokenUsage ?? {
@@ -1098,6 +1390,25 @@ export class PipelineRunner {
       this.logStage(stageLanguage, { zh: "落盘草稿与真相文件", en: "persisting draft and truth files" });
       await writer.saveChapter(bookDir, draftOutput, gp.numericalSystem, resolvedLang);
       await writer.saveNewTruthFiles(bookDir, draftOutput, resolvedLang);
+
+      // Phase 1c: 实体提取闭环 — 从章节内容中提取实体（角色 / 场景 / 物品等）
+      // 并写入 entities.db。这样新建的角色会自动成为后续章节 roundtable 的数据源。
+      try {
+        this.logStage(stageLanguage, { zh: "提取章节实体", en: "extracting chapter entities" });
+        const extractor = new EntityExtractor(this.agentCtxFor("entity-extractor", bookId));
+        const extraction = await extractor.extractFromChapter(draftOutput.content, chapterNumber);
+        if (extraction.delta && (extraction.delta.characters.length > 0 || extraction.delta.scenes.length > 0 || extraction.delta.organizations.length > 0 || extraction.delta.items.length > 0 || extraction.delta.concepts.length > 0)) {
+          const entityDB = new EntityDB(bookDir);
+          entityDB.applyDelta(extraction.delta, chapterNumber);
+          entityDB.close();
+          this.config.logger?.info(
+            `[entities] 第 ${chapterNumber} 章实体提取完成 — 角色 ${extraction.delta.characters.length} / 场景 ${extraction.delta.scenes.length} / 组织 ${extraction.delta.organizations.length} / 物品 ${extraction.delta.items.length} / 概念 ${extraction.delta.concepts.length}（置信度 ${(extraction.confidence * 100).toFixed(0)}%）`,
+          );
+        }
+      } catch (err) {
+        this.config.logger?.warn(`[entities] 第 ${chapterNumber} 章实体提取失败，跳过: ${err}`);
+      }
+
       await this.syncLegacyStructuredStateFromMarkdown(bookDir, chapterNumber, draftOutput);
       await this.syncNarrativeMemoryIndex(bookId);
 
@@ -1171,6 +1482,69 @@ export class PipelineRunner {
     };
   }
 
+  async deleteChapter(bookId: string, chapterNumber: number): Promise<DeleteChapterResult> {
+    await this.state.ensureControlDocuments(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const chaptersDir = join(bookDir, "chapters");
+    const storyDir = join(bookDir, "story");
+
+    // 1. 从 index 中移除该章节
+    const index = await this.state.loadChapterIndex(bookId);
+    const updatedIndex = index.filter((ch) => ch.number !== chapterNumber);
+    if (index.length === updatedIndex.length) {
+      throw new Error(`Chapter ${chapterNumber} not found in index.`);
+    }
+    await this.state.saveChapterIndexAt(bookDir, updatedIndex);
+
+    // 2. 删除章节文件 chapters/000X_*.md
+    let deletedFile = "";
+    try {
+      const files = await readdir(chaptersDir);
+      const file = files.find((f) => f.match(new RegExp(`^${String(chapterNumber).padStart(4, "0")}_.*\\.md$`)));
+      if (file) {
+        await rm(join(chaptersDir, file), { force: true });
+        deletedFile = file;
+      }
+    } catch {
+      // chapters dir might not exist
+    }
+
+    // 3. 删除 runtime 产物 story/runtime/chapter-{NNNN}.*
+    let runtimeFilesDeleted = 0;
+    try {
+      const runtimeDir = join(storyDir, "runtime");
+      const runtimeFiles = await readdir(runtimeDir);
+      const prefix = `chapter-${String(chapterNumber).padStart(4, "0")}.`;
+      for (const f of runtimeFiles) {
+        if (f.startsWith(prefix)) {
+          await rm(join(runtimeDir, f), { force: true });
+          runtimeFilesDeleted++;
+        }
+      }
+    } catch {
+      // runtime dir might not exist
+    }
+
+    // 4. 删除快照 story/snapshots/{chapterNumber}/
+    let snapshotDeleted = false;
+    try {
+      const snapshotDir = join(storyDir, "snapshots", String(chapterNumber));
+      await rm(snapshotDir, { recursive: true, force: true });
+      snapshotDeleted = true;
+    } catch {
+      // snapshot dir might not exist
+    }
+
+    return {
+      bookId,
+      chapterNumber,
+      deletedFile,
+      runtimeFilesDeleted,
+      snapshotDeleted,
+      note: "章节文件、runtime 产物和快照已删除。entities.db 和 memory.db 中与该章节关联的数据未自动清理——如需完全清除，可运行 auditor 重建索引。",
+    };
+  }
+
   async composeChapter(bookId: string, context?: string): Promise<ComposeChapterResult> {
     await this.state.ensureControlDocuments(bookId);
     const book = await this.state.loadBookConfig(bookId);
@@ -1195,6 +1569,48 @@ export class PipelineRunner {
       contextPath: relativeToBookDir(bookDir, composed.contextPath),
       ruleStackPath: relativeToBookDir(bookDir, composed.ruleStackPath),
       tracePath: relativeToBookDir(bookDir, composed.tracePath),
+    };
+  }
+
+  /**
+   * 规划章节组（3-8章的短期情节规划）
+   */
+  async planChapterGroup(bookId: string, startChapter?: number, count?: number): Promise<PlanGroupResult> {
+    const releaseLock = await this.state.acquireBookLock(bookId);
+    try {
+      return await this._planChapterGroupLocked(bookId, startChapter, count);
+    } finally {
+      await releaseLock();
+    }
+  }
+
+  private async _planChapterGroupLocked(
+    bookId: string,
+    startChapter?: number,
+    count?: number,
+  ): Promise<PlanGroupResult> {
+    await this.state.ensureControlDocuments(bookId);
+    const book = await this.state.loadBookConfig(bookId);
+    const bookDir = this.state.bookDir(bookId);
+    const chapterNumber = startChapter ?? await this.state.getNextChapterNumber(bookId);
+    const stageLanguage = await this.resolveBookLanguage(book);
+    this.logStage(stageLanguage, { zh: "规划章节组", en: "planning chapter group" });
+
+    const planner = new GroupPlannerAgent(this.agentCtxFor("group-planner", bookId));
+    const result = await planner.planGroup({
+      book,
+      bookDir,
+      startChapter: chapterNumber,
+      count,
+    });
+
+    return {
+      bookId,
+      groupNumber: result.intent.groupNumber,
+      startChapter: result.intent.startChapter,
+      endChapter: result.intent.endChapter,
+      goal: result.intent.goal,
+      intentPath: relativeToBookDir(bookDir, result.runtimePath),
     };
   }
 
@@ -1223,7 +1639,44 @@ export class PipelineRunner {
       chapterNumber: targetChapter,
       language,
     });
-    const result = evaluation.auditResult;
+    let result = evaluation.auditResult;
+
+    // --- 真人感审计 ---
+    // 在结构审计通过后额外执行真人感审计，将其问题合并到总结果中
+    // 除非 genre profile 显式关闭
+    if (gp.enableHumanityAudit !== false) {
+      try {
+        const humanityAuditor = new HumanityAuditor(this.agentCtxFor("humanity-auditor", bookId));
+        const humanityResult = await humanityAuditor.auditHumanity(
+          bookDir,
+          content,
+          targetChapter,
+          book.genre,
+        );
+        if (humanityResult && Array.isArray(humanityResult.issues)) {
+          const humanityIssues = humanityResult.issues.map((issue) => ({
+            severity: issue.severity,
+            category: issue.category,
+            description: issue.description,
+            suggestion: issue.suggestion ?? "",
+            repairScope: "humanity-enhance" as const,
+          }));
+          const hScore = humanityResult.overallScore ?? 0;
+          const hasCriticalHumanityIssue = humanityResult.issues.some((i) => i.severity === "critical");
+          result = {
+            ...result,
+            issues: [...result.issues, ...humanityIssues],
+            // 综合通过判断：结构通过且真人感分数不低于 80
+            passed: result.passed && hScore >= 80 && !hasCriticalHumanityIssue,
+          };
+        }
+      } catch (humanityError) {
+        // 真人感审计失败不阻断主结果
+        this.config.logger?.warn(
+          `[audit] Chapter ${targetChapter} humanity audit failed: ${humanityError instanceof Error ? humanityError.message : String(humanityError)}`,
+        );
+      }
+    }
 
     // Update index with audit result
     const index = await this.state.loadChapterIndex(bookId);
@@ -1277,12 +1730,21 @@ export class PipelineRunner {
       });
       const index = await this.state.loadChapterIndex(bookId);
       const chapterMeta = index.find((ch) => ch.number === targetChapter);
-      if (!chapterMeta) {
-        throw new Error(`Chapter ${targetChapter} not found in index`);
-      }
 
-      // 使用保存的审计问题，而不是重新审计
+      // 检查章节文件是否存在（即使不在 index 中）
       const content = await this.readChapterContent(bookDir, targetChapter);
+
+      // 如果章节不在 index 中，创建一个临时的 chapterMeta
+      const effectiveChapterMeta = chapterMeta ?? {
+        number: targetChapter,
+        title: `第${targetChapter}章`,
+        status: "ready-for-review" as const,
+        wordCount: content.length,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        auditIssues: [],
+        lengthWarnings: [],
+      };
       const { profile: gp } = await this.loadGenreProfile(book.genre);
       const language = book.language ?? gp.language;
       const countingMode = resolveLengthCountingMode(language);
@@ -1296,101 +1758,154 @@ export class PipelineRunner {
           { reuseExistingIntentWhenContextMissing: true },
         );
 
-      // 从 index 中加载已保存的审计问题
-      const savedIssueStrings = chapterMeta.auditIssues ?? [];
+      // 加载章节细纲文件（在 rewrite、rework 或 auto 模式下）
+      let chapterOutlineContent: string | undefined;
+      if (mode === "rewrite" || mode === "rework" || mode === "auto") {
+        const padded = String(targetChapter).padStart(4, "0");
+        const storyDir = join(bookDir, "story");
+        const outlinePaths = [
+          join(storyDir, "outline", "chapter-outline-v1-super-detail.md"),
+          join(storyDir, "outline", `细纲_第${targetChapter}章.md`),
+          join(storyDir, "outline", `细纲_第${padded}章.md`),
+          join(storyDir, "runtime", `chapter-${padded}.plan.md`),
+          join(storyDir, "runtime", `chapter-${targetChapter}.plan.md`),
+          join(storyDir, "runtime", `chapter-${padded}.intent.md`),
+        ];
+        for (const outlinePath of outlinePaths) {
+          try {
+            const content = await readFile(outlinePath, "utf-8");
+            if (content?.trim()) {
+              chapterOutlineContent = content;
+              this.config.logger?.info(`[rewrite] 已为第 ${targetChapter} 章加载章节细纲`);
+              break;
+            }
+          } catch {
+            // 文件不存在，继续尝试下一个路径
+          }
+        }
+      }
 
-      // 如果有用户指令，直接使用用户指令作为修改需求（跳过审计）
+      // 如果加载了章节细纲，将其作为高级别指导注入到 allIssues（在用户指令之前）
+      let outlineTextForIssues: string | undefined;
+      if (chapterOutlineContent?.trim()) {
+        const chapters = chapterOutlineContent.split(/## 第\d+章[:：\s]/);
+        const currentChapterOutline = chapters.find(c => c.startsWith(`${targetChapter}`));
+        outlineTextForIssues = currentChapterOutline
+          ? currentChapterOutline.trim().slice(0, 2000)
+          : chapterOutlineContent.trim().slice(0, 2000);
+      }
+
+      // 从 index 中加载已保存的审计问题
+      const savedIssueStrings = effectiveChapterMeta.auditIssues ?? [];
+
+      // 组装修订需求：用户指令 + 选中的问题 + 审计问题（按优先级组合）
+      // 1. 用户指令（最高优先级）—— 用户明确提出的修改要求
+      // 2. selectedIssues（中优先级）—— 用户从审计结果中勾选的问题
+      // 3. savedIssueStrings（低优先级）—— 保存的审计问题（如果没有用户输入）
       let preRevision;
       const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
-      if (userInstruction && userInstruction.trim().length > 0) {
-        this.logStage(stageLanguage, {
-          zh: `使用用户指令进行修订：${userInstruction.substring(0, 50)}...`,
-          en: `using user instruction for revision: ${userInstruction.substring(0, 50)}...`,
-        });
-        preRevision = {
-          auditResult: {
-            passed: false,
-            issues: [{
-              severity: "warning" as const,
-              category: "用户指令",
-              description: userInstruction,
-              suggestion: userInstruction,
-            }],
-            summary: `用户要求：${userInstruction}`,
-          },
-          blockingCount: 1,
-          aiTellCount: 0,
-          criticalCount: 1,
-          revisionBlockingIssues: [{
-            severity: "warning" as const,
-            category: "用户指令",
-            description: userInstruction,
-            suggestion: userInstruction,
-          }],
-        };
-      } else if (savedIssueStrings.length > 0) {
-        // 使用保存的审计结果（将字符串转换为 AuditIssue 格式）
-        this.logStage(stageLanguage, {
-          zh: `使用第${targetChapter}章已保存的审计问题（${savedIssueStrings.length}个）`,
-          en: `using saved audit issues for chapter ${targetChapter} (${savedIssueStrings.length} issues)`,
-        });
 
-        // 解析保存的问题字符串（格式：[severity] description）
-        const parsedIssues = savedIssueStrings.map(issueStr => {
-          // 匹配 [critical]、[warning]、[info]
-          const severityMatch = issueStr.match(/^\[(critical|warning|info)\]\s*(.*)/i);
-          const severity = (severityMatch?.[1]?.toLowerCase() ?? "warning") as "critical" | "warning" | "info";
-          const description = severityMatch?.[2]?.trim() ?? issueStr;
+      // 收集所有需要处理的问题
+      const allIssues: Array<{ severity: "critical" | "warning" | "info"; category: string; description: string; suggestion: string }> = [];
 
-          // 尝试从描述中提取类别（通常在冒号前）
-          const colonIndex = description.indexOf(":");
-          const category = colonIndex > 0 ? description.substring(0, colonIndex).trim() : "unknown";
-          const cleanDescription = colonIndex > 0 ? description.substring(colonIndex + 1).trim() : description;
-
-          return {
-            severity,
-            category,
-            description: cleanDescription,
-            suggestion: "根据审计建议修改",
-          };
-        });
-
-        preRevision = {
-          auditResult: {
-            passed: false,
-            issues: parsedIssues,
-            summary: `发现 ${parsedIssues.length} 个问题需要修复`,
-          },
-          blockingCount: parsedIssues.filter(i => i.severity === "critical").length,
-          aiTellCount: parsedIssues.filter(i => i.severity === "warning").length,
-          criticalCount: parsedIssues.filter(i => i.severity === "critical").length,
-          revisionBlockingIssues: parsedIssues.filter(i => i.severity === "critical") as any,
-        };
-      } else {
-        // 重新审计
-        this.logStage(stageLanguage, {
-          zh: `重新审计第${targetChapter}章`,
-          en: `re-auditing chapter ${targetChapter}`,
-        });
-        preRevision = await this.evaluateMergedAudit({
-          auditor,
-          book,
-          bookDir,
-          chapterContent: content,
-          chapterNumber: targetChapter,
-          language,
-          auditOptions: reviseControlInput
-            ? {
-                chapterIntent: reviseControlInput.plan.intentMarkdown,
-                chapterMemo: reviseControlInput.plan.memo,
-                contextPackage: reviseControlInput.composed.contextPackage,
-                ruleStack: reviseControlInput.composed.ruleStack,
-              }
-            : undefined,
+      // 0. 章节细纲指导（如果加载了）—— 最高优先级
+      if (outlineTextForIssues) {
+        allIssues.push({
+          severity: "critical",
+          category: "章节细纲指导",
+          description: `根据章节细纲进行重写：\n${outlineTextForIssues}`,
+          suggestion: "基于章节细纲重组和重写本章，遵循细纲的结构、节奏和情节节点",
         });
       }
 
-      if (preRevision.blockingCount === 0 && preRevision.aiTellCount === 0) {
+      // 1. 用户指令作为主要修改需求
+      if (userInstruction && userInstruction.trim().length > 0) {
+        this.logStage(stageLanguage, {
+          zh: `用户指令：${userInstruction.substring(0, 80)}...`,
+          en: `User instruction: ${userInstruction.substring(0, 80)}...`,
+        });
+        allIssues.push({
+          severity: "critical",
+          category: "用户修改要求",
+          description: userInstruction.trim(),
+          suggestion: `按用户要求修改：${userInstruction.trim()}`,
+        });
+      }
+
+      // 2. 如果没有用户指令，使用保存的审计问题或重新审计
+      if (allIssues.length === 0) {
+        if (savedIssueStrings.length > 0) {
+          this.logStage(stageLanguage, {
+            zh: `使用第${targetChapter}章已保存的审计问题（${savedIssueStrings.length}个）`,
+            en: `using saved audit issues for chapter ${targetChapter} (${savedIssueStrings.length} issues)`,
+          });
+
+          // 解析保存的问题字符串（格式：[severity] description）
+          const parsedIssues = savedIssueStrings.map(issueStr => {
+            const severityMatch = issueStr.match(/^\[(critical|warning|info)\]\s*(.*)/i);
+            const severity = (severityMatch?.[1]?.toLowerCase() ?? "warning") as "critical" | "warning" | "info";
+            const description = severityMatch?.[2]?.trim() ?? issueStr;
+
+            const colonIndex = description.indexOf(":");
+            const category = colonIndex > 0 ? description.substring(0, colonIndex).trim() : "审计问题";
+            const cleanDescription = colonIndex > 0 ? description.substring(colonIndex + 1).trim() : description;
+
+            return {
+              severity,
+              category,
+              description: cleanDescription,
+              suggestion: "根据审计建议修改",
+            };
+          });
+
+          allIssues.push(...parsedIssues);
+        } else {
+          // 重新审计
+          this.logStage(stageLanguage, {
+            zh: `重新审计第${targetChapter}章`,
+            en: `re-auditing chapter ${targetChapter}`,
+          });
+          const auditResult = await auditor.auditChapter(bookDir, content, targetChapter, book.genre);
+          allIssues.push(...auditResult.issues);
+        }
+      }
+
+      // 构建 preRevision 对象
+      preRevision = {
+        auditResult: {
+          passed: allIssues.filter(i => i.severity === "critical").length === 0,
+          issues: allIssues,
+          summary: allIssues.length > 0
+            ? `需要处理 ${allIssues.length} 个修改项`
+            : "无需修改",
+        },
+        blockingCount: allIssues.filter(i => i.severity === "critical").length,
+        aiTellCount: allIssues.filter(i => i.severity === "warning").length,
+        criticalCount: allIssues.filter(i => i.severity === "critical").length,
+        revisionBlockingIssues: allIssues.filter(i => i.severity === "critical"),
+      };
+
+      // 记录修订来源
+      const hasUserInstruction = userInstruction && userInstruction.trim().length > 0;
+      if (hasUserInstruction) {
+        this.logStage(stageLanguage, {
+          zh: `修订模式：按用户要求修改（用户指令优先）`,
+          en: `Revision mode: following user instruction (user priority)`,
+        });
+      } else {
+        this.logStage(stageLanguage, {
+          zh: `修订模式：按审计问题修改`,
+          en: `Revision mode: following audit issues`,
+        });
+      }
+
+      // 当用户有明确修改指令（rewrite/rework/polish/anti-detect），或者有用户指令时，不能跳过
+      // 即使没有审计问题，也要执行相应的修订操作
+      // spot-fix 除外：没有明确的审计问题时跳过是合理的
+      if (preRevision.blockingCount === 0 && preRevision.aiTellCount === 0 &&
+          !userInstruction &&
+          mode !== "rewrite" && mode !== "rework" && mode !== "auto" &&
+          mode !== "polish" && mode !== "anti-detect") {
         return {
           chapterNumber: targetChapter,
           wordCount: countChapterLength(content, countingMode),
@@ -1401,8 +1916,8 @@ export class PipelineRunner {
         };
       }
 
-      const chapterLengthTarget = chapterMeta.lengthTelemetry?.target ?? book.chapterWordCount;
-      const lengthLanguage = chapterMeta.lengthTelemetry?.countingMode === "en_words"
+      const chapterLengthTarget = effectiveChapterMeta.lengthTelemetry?.target ?? book.chapterWordCount;
+      const lengthLanguage = effectiveChapterMeta.lengthTelemetry?.countingMode === "en_words"
         ? "en"
         : language;
       const lengthSpec = buildLengthSpec(
@@ -1529,8 +2044,8 @@ export class PipelineRunner {
       }
       const reviseLang = book.language ?? gp.language;
       const reviseHeading = reviseLang === "en"
-        ? `# Chapter ${targetChapter}: ${chapterMeta.title}`
-        : `# 第${targetChapter}章 ${chapterMeta.title}`;
+        ? `# Chapter ${targetChapter}: ${effectiveChapterMeta.title}`
+        : `# 第${targetChapter}章 ${effectiveChapterMeta.title}`;
       await writeFile(
         join(chaptersDir, existingFile),
         `${reviseHeading}\n\n${normalizedRevision.content}`,
@@ -1593,7 +2108,7 @@ export class PipelineRunner {
 
       // ── 用户偏好学习：记录本次编辑 ──
       try {
-        const editTracker = new EditTracker();
+        const editTracker = this.getEditTracker(bookId);
         const edit = editTracker.trackEdit({
           userId: "default", // TODO: 从会话中获取用户ID
           bookId,
@@ -1608,11 +2123,11 @@ export class PipelineRunner {
 
         // 分析偏好并更新用户画像
         const bufferedEdits = editTracker.getBufferedEdits();
-        if (bufferedEdits.length >= 5) {
+        if (bufferedEdits.length >= editTracker.batchSize) {
           const analyzer = new PreferenceAnalyzer();
           const preference = analyzer.analyze(bufferedEdits);
 
-          const profileManager = new UserProfileManager();
+          const profileManager = this.getProfileManager(bookId);
           profileManager.updatePreference("default", bookId, preference);
 
           this.logStage(stageLanguage, {
@@ -1724,6 +2239,161 @@ export class PipelineRunner {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Phase 4+5: 真人感 / 去 AI 味 / 情感注入 后处理
+  // ---------------------------------------------------------------------------
+
+  /**
+   * 构建写作上下文（供 HumanityEngine 后处理使用）
+   *
+   * 尝试从 book rules 读取主角名，失败则默认 "主角"。
+   * existingBodyDescriptions / existingProps 暂以空数组传入（运行时不做去重追踪）。
+   */
+  private async buildWritingContext(
+    bookDir: string,
+    bookConfig: BookConfig,
+    chapterNumber: number,
+    lengthSpec: LengthSpec,
+  ): Promise<WritingContext> {
+    let protagonistName = "主角";
+    try {
+      const rulesRaw = await readFile(join(bookDir, "story", "book_rules.md"), "utf-8").catch(() => "");
+      if (rulesRaw) {
+        const parsed = parseBookRules(rulesRaw);
+        if (parsed?.rules?.protagonist?.name) {
+          protagonistName = parsed.rules.protagonist.name;
+        }
+      }
+    } catch {
+      // 读取失败保持默认值
+    }
+
+    return {
+      protagonistName,
+      chapterWordCount: lengthSpec.target,
+      existingBodyDescriptions: [],
+      existingProps: [],
+    };
+  }
+
+  /**
+   * 从 emotional_arcs.md 解析指定章节的情绪信息
+   *
+   * @returns 解析到的情绪，文件不存在或未匹配则返回 null
+   */
+  private async parseEmotionFromArcs(
+    bookDir: string,
+    chapterNumber: number,
+  ): Promise<{ primaryEmotion: import("../emotional/types.js").EmotionType; intensity: number } | null> {
+    try {
+      const arcsPath = join(bookDir, "story", "emotional_arcs.md");
+      return await parseEmotionFromArcsFile(arcsPath, chapterNumber);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 章节后处理：anti-ai + humanity + emotion（纯程序化，无 LLM）
+   *
+   * 每个模块独立 try/catch，单个模块失败只记录 warning 不阻断写作流程。
+   * 调用时机：review cycle 之后、persistChapterArtifacts 之前。
+   */
+  private async postProcessChapter(
+    content: string,
+    bookDir: string,
+    bookConfig: BookConfig,
+    chapterNumber: number,
+    lengthSpec: LengthSpec,
+  ): Promise<string> {
+    let result = content;
+    const lang = this.languageFromLengthSpec(lengthSpec);
+
+    // Phase 8.2: 按配置开关控制各后处理阶段
+    const enableAntiAI = bookConfig.enableAntiAI ?? true;
+    const enableHumanity = bookConfig.enableHumanity ?? true;
+    const enableEmotion = bookConfig.enableEmotion ?? true;
+    const humanizerIntensity = bookConfig.humanizerIntensity ?? 0.3;
+
+    // 1. anti-ai 处理（纯程序化，无 LLM）
+    if (enableAntiAI) try {
+      const humanizer = new Humanizer();
+      const beforeLen = result.length;
+      result = humanizer.humanize(result, humanizerIntensity);
+      const afterLen = result.length;
+      this.logStage(lang, {
+        zh: `[anti-ai] humanize applied: ${beforeLen}→${afterLen} chars`,
+        en: `[anti-ai] humanize applied: ${beforeLen}→${afterLen} chars`,
+      });
+
+      const burstinessAdjuster = new BurstinessAdjuster();
+      result = burstinessAdjuster.adjustBurstiness(result, 0.6);
+      this.logStage(lang, {
+        zh: `[anti-ai] burstiness adjusted`,
+        en: `[anti-ai] burstiness adjusted`,
+      });
+    } catch (e) {
+      this.logWarn(lang, {
+        zh: `[anti-ai] 处理失败: ${e}`,
+        en: `[anti-ai] failed: ${e}`,
+      });
+    }
+
+    // 2. humanity 处理（沉默层+矛盾+呼吸段，纯程序化）
+    if (enableHumanity) try {
+      const ctx = await this.buildWritingContext(bookDir, bookConfig, chapterNumber, lengthSpec);
+      const beforeLen = result.length;
+      result = this.humanityEngine.postProcessWrittenText(result, ctx);
+      const afterLen = result.length;
+      this.logStage(lang, {
+        zh: `[humanity] post-process applied: ${beforeLen}→${afterLen} chars`,
+        en: `[humanity] post-process applied: ${beforeLen}→${afterLen} chars`,
+      });
+    } catch (e) {
+      this.logWarn(lang, {
+        zh: `[humanity] 处理失败: ${e}`,
+        en: `[humanity] failed: ${e}`,
+      });
+    }
+
+    // 3. emotional 处理（情感注入，纯程序化）
+    if (enableEmotion) try {
+      const emotionData = await this.parseEmotionFromArcs(bookDir, chapterNumber);
+      if (emotionData) {
+        const injector = new EmotionInjector();
+        const arc: EmotionalArc = {
+          id: "runtime",
+          bookId: bookConfig.id,
+          chapters: [{
+            chapterNumber,
+            primaryEmotion: emotionData.primaryEmotion,
+            intensity: emotionData.intensity,
+            subEmotions: [],
+            turningPoint: false,
+            notes: "",
+          }],
+          overallTheme: "",
+          climaxChapter: 0,
+          resolutionChapter: 0,
+        };
+        const beforeLen = result.length;
+        result = await injector.enhanceChapter(result, arc, chapterNumber);
+        const afterLen = result.length;
+        this.logStage(lang, {
+          zh: `[emotion] enhanced with ${emotionData.primaryEmotion}(${emotionData.intensity}): ${beforeLen}→${afterLen} chars`,
+          en: `[emotion] enhanced with ${emotionData.primaryEmotion}(${emotionData.intensity}): ${beforeLen}→${afterLen} chars`,
+        });
+      }
+    } catch (e) {
+      this.logWarn(lang, {
+        zh: `[emotion] 处理失败: ${e}`,
+        en: `[emotion] failed: ${e}`,
+      });
+    }
+
+    return result;
+  }
+
   private async _writeNextChapterLocked(
     bookId: string,
     wordCount?: number,
@@ -1735,6 +2405,46 @@ export class PipelineRunner {
     const bookDir = this.state.bookDir(bookId);
     await this.assertNoPendingStateRepair(bookId);
     const chapterNumber = await this.state.getNextChapterNumber(bookId);
+
+    // 验证所有前序章节是否已正确完成（检查 index 和文件）
+    const validationIndex = await this.state.loadChapterIndex(bookId);
+    const chaptersDirForValidation = join(bookDir, "chapters");
+    let chapterFilesForValidation: string[] = [];
+    try {
+      chapterFilesForValidation = await readdir(chaptersDirForValidation);
+    } catch {
+      // ignore
+    }
+    const missingChapters: number[] = [];
+    const failedChapters: Array<{ number: number; status: string }> = [];
+
+    for (let i = 1; i < chapterNumber; i++) {
+      const chapterMeta = validationIndex.find((ch) => ch.number === i);
+      const hasFile = chapterFilesForValidation.some((f) => f.match(new RegExp(`^${String(i).padStart(4, "0")}_.*\\.md$`)));
+      if (!chapterMeta && !hasFile) {
+        missingChapters.push(i);
+      } else if (chapterMeta?.status === "audit-failed") {
+        failedChapters.push({ number: i, status: chapterMeta.status });
+      }
+    }
+
+    if (missingChapters.length > 0) {
+      const missingList = missingChapters.join(", ");
+      throw new Error(
+        `无法写第${chapterNumber}章：以下章节尚未写入，请先完成它们：第${missingList}章。` +
+        `\nCannot write chapter ${chapterNumber}: the following chapters are missing. Please write them first: chapters ${missingList}.`
+      );
+    }
+
+    if (failedChapters.length > 0) {
+      const failedList = failedChapters.map((ch) => `第${ch.number}章`).join("、");
+      throw new Error(
+        `REVISION_REQUIRED:${failedChapters[0].number}` +
+        `\n前序章节审核未通过：${failedList}。请先修订这些章节再继续。` +
+        `\nPrevious chapters failed audit: ${failedList}. Please revise them before continuing.`
+      );
+    }
+
     const stageLanguage = await this.resolveBookLanguage(book);
     this.logStage(stageLanguage, { zh: "准备章节输入", en: "preparing chapter inputs" });
     const writeInput = await this.prepareWriteInput(
@@ -1743,6 +2453,8 @@ export class PipelineRunner {
       chapterNumber,
       externalContext,
     );
+    // Phase 8: 首次写章节时加载/创建真人感画像（失败时优雅降级到默认画像）
+    await this.ensureHumanityEngineReady(bookId, book);
     const reducedControlInput = writeInput.chapterIntent && writeInput.contextPackage && writeInput.ruleStack
       ? {
           chapterIntent: writeInput.chapterIntent,
@@ -1766,6 +2478,33 @@ export class PipelineRunner {
     const { readBookRules } = await import("../agents/rules-reader.js");
     const parsedBookRules = (await readBookRules(bookDir))?.rules ?? null;
 
+    // 0. Pre-write 角色圆桌讨论（与 writeDraft 保持一致）
+    let roleConstraints: string | undefined = undefined;
+    try {
+      const bookRulesRaw = await readFile(join(bookDir, "story", "book_rules.md"), "utf-8").catch(() => "");
+      const parsedRules = bookRulesRaw ? parseBookRules(bookRulesRaw) : null;
+      if (!parsedRules?.rules.disableRoundtable) {
+        const activeCharacters = await loadActiveCharacters(bookDir, this.config.logger);
+        const characterCount = Object.keys(activeCharacters).length;
+        if (characterCount > 0) {
+          this.config.logger?.info(`[roundtable] 第 ${chapterNumber} 章开始角色圆桌讨论，${characterCount} 个角色参与`);
+          const roundtable = new CharacterRoundtable(this.agentCtxFor("roundtable", bookId));
+          const roundtableResult = await roundtable.discuss({
+            chapterNumber,
+            chapterMemo: writeInput.chapterMemo?.body ?? "",
+            chapterIntent: writeInput.chapterIntent ?? "",
+            characters: activeCharacters,
+            currentContext: writeInput.externalContext ?? "",
+            maxCharacters: 4,
+          });
+          roleConstraints = roundtableResult.constraintsBlock;
+          this.config.logger?.info(`[roundtable] 第 ${chapterNumber} 章讨论完成，约束块长度 ${roleConstraints.length} 字符`);
+        }
+      }
+    } catch (err) {
+      this.config.logger?.warn(`[roundtable] 角色圆桌讨论失败，跳过: ${err}`);
+    }
+
     // 1. Write chapter
     const writer = new WriterAgent(this.agentCtxFor("writer", bookId));
     this.logStage(stageLanguage, { zh: "撰写章节草稿", en: "writing chapter draft" });
@@ -1777,6 +2516,9 @@ export class PipelineRunner {
       lengthSpec,
       ...(wordCount ? { wordCountOverride: wordCount } : {}),
       ...(temperatureOverride ? { temperatureOverride } : {}),
+      ...(roleConstraints ? { roleConstraints } : {}),
+      profileManager: this.getProfileManager(bookId),
+      humanityEngine: this.humanityEngine,
     });
     const writerCount = countChapterLength(output.content, lengthSpec.countingMode);
 
@@ -1810,6 +2552,16 @@ export class PipelineRunner {
           : "尚未审查（手动模式：写完即停，需要时点“审查”）。",
       };
     } else {
+      // Phase 2: 预读取 hooks state 用于 Chekhov's Gun 回环唤起检测
+      let hooksStateForCallback = undefined;
+      try {
+        const stateDir = join(bookDir, "story", "state");
+        const raw = await readFile(join(stateDir, "hooks.json"), "utf-8");
+        hooksStateForCallback = JSON.parse(raw);
+      } catch {
+        // hooks.json 可能不存在（新建的书），忽略
+      }
+
       const auditor = new ContinuityAuditor(this.agentCtxFor("auditor", bookId));
       const reviewResult = await runChapterReviewCycle({
         book: { genre: book.genre },
@@ -1847,11 +2599,28 @@ export class PipelineRunner {
           // Phase 9-3: verify the draft acts on every hook the memo committed to.
           const memoBody = writeInput.chapterMemo?.body ?? "";
           const ledgerIssues = memoBody
-            ? validateHookLedger(memoBody, content)
+            ? validateHookLedger(memoBody, content, hooksStateForCallback, chapterNumber)
             : [];
           return [...baseIssues, ...ledgerIssues];
         },
+        checkInfoBoundary: (content) => {
+          try {
+            const entityDB = new EntityDB(bookDir);
+            const checker = new InfoBoundaryChecker(entityDB);
+            // 提取说话角色（简化版：从对话引号提取）
+            const speakingMatch = content.match(/["「『]([^"」『]+)["」』]/g);
+            const speakingCharacters = speakingMatch
+              ? [...new Set(speakingMatch.map(m => m.slice(1, -1).split(/[：:]/)[0]?.trim() ?? "").filter(Boolean))]
+              : [];
+            return checker.check(content, chapterNumber, speakingCharacters);
+          } catch {
+            return null;
+          }
+        },
         maxReviewIterations: this.config.writingReviewRetries,
+        humanityAuditor: new HumanityAuditor(this.agentCtxFor("humanity-auditor", bookId)),
+        enableHumanityAudit: gp.enableHumanityAudit !== false,
+        maxHumanityIterations: 2,
         logWarn: (message) => this.logWarn(pipelineLang, message),
         logStage: (message) => this.logStage(stageLanguage, message),
       });
@@ -1863,7 +2632,45 @@ export class PipelineRunner {
       postReviseCount = reviewResult.postReviseCount;
       normalizeApplied = reviewResult.normalizeApplied;
       preAuditNormalizedWordCount = reviewResult.preAuditNormalizedWordCount;
+
+      // 真人感审计结果：日志 + 合并到主 auditResult
+      if (reviewResult.humanityAuditResult) {
+        const hScore = reviewResult.humanityAuditResult.overallScore ?? 0;
+        const hIssues = reviewResult.humanityAuditResult.issues.length;
+        this.logInfo(pipelineLang, {
+          zh: `[humanity-audit] 真人感审计完成: ${hScore}分, ${hIssues}个问题, ${reviewResult.humanityRevised ? "已修复" : "无需修复"}`,
+          en: `[humanity-audit] Humanity audit complete: score ${hScore}, ${hIssues} issues, ${reviewResult.humanityRevised ? "revised" : "no revision needed"}`,
+        });
+
+        // 将真人感问题合并到主 auditResult
+        if (Array.isArray(reviewResult.humanityAuditResult.issues) && reviewResult.humanityAuditResult.issues.length > 0) {
+          const humanityIssues = reviewResult.humanityAuditResult.issues.map((issue) => ({
+            severity: issue.severity,
+            category: issue.category,
+            description: issue.description,
+            suggestion: issue.suggestion ?? "",
+            repairScope: "humanity-enhance" as const,
+          }));
+          const hasCriticalHumanityIssue = humanityIssues.some((i) => i.severity === "critical");
+          auditResult = {
+            ...auditResult,
+            issues: [...auditResult.issues, ...humanityIssues],
+            passed: auditResult.passed && hScore >= 80 && !hasCriticalHumanityIssue,
+          };
+        }
+      }
     }
+
+    // Phase 4+5: Post-process — anti-ai + humanity + emotion（程序化处理，无 LLM）
+    // 在 review cycle 之后、persistChapterArtifacts 之前对 finalContent 做轻度真人感微调。
+    // 单个模块失败只记录 warning，不阻断写作流程。
+    finalContent = await this.postProcessChapter(
+      finalContent,
+      bookDir,
+      book,
+      chapterNumber,
+      lengthSpec,
+    );
 
     // 3b. Lightweight per-chapter promotion pass — check if any hooks should
     // be promoted based on advanced_count derived from chapter_summaries.
@@ -2064,6 +2871,31 @@ export class PipelineRunner {
       saveChapter: () => writer.saveChapter(bookDir, persistenceOutput, gp.numericalSystem, pipelineLang),
       saveTruthFiles: async () => {
         await writer.saveNewTruthFiles(bookDir, persistenceOutput, pipelineLang);
+
+        // 实体提取闭环 — 自动写入 entities.db（与 writeDraft 保持一致）
+        try {
+          this.logStage(stageLanguage, { zh: "提取章节实体", en: "extracting chapter entities" });
+          const extractor = new EntityExtractor(this.agentCtxFor("entity-extractor", bookId));
+          const extraction = await extractor.extractFromChapter(finalContent, chapterNumber);
+          if (
+            extraction.delta &&
+            (extraction.delta.characters.length > 0 ||
+              extraction.delta.scenes.length > 0 ||
+              extraction.delta.organizations.length > 0 ||
+              extraction.delta.items.length > 0 ||
+              extraction.delta.concepts.length > 0)
+          ) {
+            const entityDB = new EntityDB(bookDir);
+            entityDB.applyDelta(extraction.delta, chapterNumber);
+            entityDB.close();
+            this.config.logger?.info(
+              `[entities] 第 ${chapterNumber} 章实体提取完成 — 角色 ${extraction.delta.characters.length} / 场景 ${extraction.delta.scenes.length} / 组织 ${extraction.delta.organizations.length} / 物品 ${extraction.delta.items.length} / 概念 ${extraction.delta.concepts.length}（置信度 ${(extraction.confidence * 100).toFixed(0)}%）`,
+            );
+          }
+        } catch (err) {
+          this.config.logger?.warn(`[entities] 第 ${chapterNumber} 章实体提取失败，跳过: ${err}`);
+        }
+
         await this.syncLegacyStructuredStateFromMarkdown(bookDir, chapterNumber, persistenceOutput);
         this.logStage(stageLanguage, { zh: "同步记忆索引", en: "syncing memory indexes" });
         await this.syncNarrativeMemoryIndex(bookId);

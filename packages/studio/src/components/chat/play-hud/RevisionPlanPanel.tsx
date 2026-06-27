@@ -1,6 +1,23 @@
 import { useMemo, useState } from "react";
-import { X, Search, CheckSquare, Square, Loader2, AlertTriangle, CheckCircle2, Sparkles } from "lucide-react";
+import { X, Search, CheckSquare, Square, Loader2, AlertTriangle, CheckCircle2, Sparkles, MessageSquare } from "lucide-react";
 
+// 后端返回的审计结果结构
+interface AuditIssue {
+  readonly severity: "critical" | "warning" | "info";
+  readonly category: string;
+  readonly description: string;
+  readonly suggestion: string;
+  readonly repairScope?: "local" | "structural" | "unknown";
+}
+
+interface AuditResponse {
+  readonly passed: boolean;
+  readonly issues: ReadonlyArray<AuditIssue>;
+  readonly summary: string;
+  readonly overallScore?: number;
+}
+
+// 前端内部使用的结构（保持不变）
 interface PlanIssue {
   readonly id: string;
   readonly severity: "critical" | "warning" | "info";
@@ -57,6 +74,7 @@ export function RevisionPlanPanel(props: {
   const [checked, setChecked] = useState<ReadonlyArray<string>>([]);
   const [chapterInput, setChapterInput] = useState<string>(String(defaultChapterNumber));
   const [activeChapter, setActiveChapter] = useState<number>(defaultChapterNumber);
+  const [userInstruction, setUserInstruction] = useState<string>("");
 
   // Audit the current chapter on demand (button click).
   function runAudit() {
@@ -72,18 +90,90 @@ export function RevisionPlanPanel(props: {
     setChecked([]);
     setError(null);
     setLoading(true);
-    fetch(`/api/v1/books/${encodeURIComponent(bookId)}/audit-with-plan/${encodeURIComponent(num)}`, {
+    fetch(`/api/v1/books/${encodeURIComponent(bookId)}/audit/${encodeURIComponent(num)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     })
-      .then((r) => r.json())
+      .then((r) => {
+        if (!r.ok) {
+          // 非 2xx 响应，尝试读取文本内容
+          return r.text().then((text) => {
+            throw new Error(`HTTP ${r.status}: ${text.slice(0, 200)}`);
+          });
+        }
+        return r.json();
+      })
       .then((data) => {
         if (data && typeof data === "object" && "error" in data) {
           setError(String(data.error));
         } else {
-          setPlan(data as PlanResponse);
+          // 将 AuditResponse 转换为 PlanResponse
+          const auditData = data as AuditResponse;
+          
+          // 按严重程度分组
+          const criticalIssues = auditData.issues.filter((i) => i.severity === "critical");
+          const warningIssues = auditData.issues.filter((i) => i.severity === "warning");
+          const infoIssues = auditData.issues.filter((i) => i.severity === "info");
+          
+          const planResponse: PlanResponse = {
+            chapterNumber: num,
+            preScore: auditData.overallScore ?? 70,
+            passed: auditData.passed,
+            summary: auditData.summary,
+            threshold: 70, // 默认阈值
+            wordCount: {
+              actual: 0, // 审计结果不包含字数，设为 0
+              target: 3000, // 默认目标字数
+              ok: true,
+            },
+            groups: [
+              {
+                groupId: "critical",
+                labelZh: "严重问题",
+                labelEn: "Critical Issues",
+                items: criticalIssues.map((issue, idx) => ({
+                  id: `critical-${idx}`,
+                  severity: issue.severity,
+                  category: issue.category,
+                  description: issue.description,
+                  suggestion: issue.suggestion,
+                  repairScope: issue.repairScope,
+                })),
+              },
+              {
+                groupId: "warning",
+                labelZh: "建议改进",
+                labelEn: "Warnings",
+                items: warningIssues.map((issue, idx) => ({
+                  id: `warning-${idx}`,
+                  severity: issue.severity,
+                  category: issue.category,
+                  description: issue.description,
+                  suggestion: issue.suggestion,
+                  repairScope: issue.repairScope,
+                })),
+              },
+              {
+                groupId: "info",
+                labelZh: "信息提示",
+                labelEn: "Info",
+                items: infoIssues.map((issue, idx) => ({
+                  id: `info-${idx}`,
+                  severity: issue.severity,
+                  category: issue.category,
+                  description: issue.description,
+                  suggestion: issue.suggestion,
+                  repairScope: issue.repairScope,
+                })),
+              },
+            ],
+          };
+          
+          setPlan(planResponse);
+          
+          // 默认勾选 critical 和 warning
           const defaultIds: string[] = [];
-          for (const g of (data as PlanResponse).groups) {
+          for (const g of planResponse.groups) {
             if (g.groupId === "critical" || g.groupId === "warning") {
               for (const it of g.items) defaultIds.push(it.id);
             }
@@ -125,10 +215,19 @@ export function RevisionPlanPanel(props: {
     setRevising(true);
     setError(null);
     try {
-      const r = await fetch(`/api/v1/books/${encodeURIComponent(bookId)}/apply-revisions/${encodeURIComponent(activeChapter)}`, {
+      // 获取用户选中的问题描述
+      const selectedDescriptions = checked
+        .map((id) => flatIssues.find((i) => i.id === id)?.description ?? "")
+        .filter(Boolean);
+
+      const r = await fetch(`/api/v1/books/${encodeURIComponent(bookId)}/revise/${encodeURIComponent(activeChapter)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({
+          mode,
+          userInstruction: userInstruction.trim(),
+          selectedIssues: selectedDescriptions.length > 0 ? selectedDescriptions : undefined,
+        }),
       });
       const data = await r.json();
       if (data && typeof data === "object" && "error" in data) {
@@ -223,6 +322,34 @@ export function RevisionPlanPanel(props: {
 
         {plan && !loading && (
           <>
+            {/* 用户自定义要求 —— 审计完成后才显示 */}
+            <div className="mb-3 rounded-lg border border-primary/25 bg-primary/5 p-3">
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <MessageSquare size={13} className="text-primary" />
+                <span className="text-xs font-semibold text-foreground">
+                  {t("你希望怎么修改？（可选）", "How do you want it revised? (optional)")}
+                </span>
+              </div>
+              <textarea
+                rows={2}
+                placeholder={t(
+                  "例如：让主角的对话更幽默一些 / 增加环境描写 / 把第三段改得更紧张",
+                  "e.g. Make the main character's dialogue more humorous / Add more environment description / Make the 3rd paragraph more tense"
+                )}
+                value={userInstruction}
+                onChange={(e) => setUserInstruction(e.target.value)}
+                className="w-full resize-y rounded-md border border-border/40 bg-background px-3 py-2 text-sm leading-5 text-foreground focus:border-primary/50 focus:outline-none"
+              />
+              <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Sparkles size={11} />
+                <span>
+                  {t(
+                    "填写后，修订将优先按照你的要求进行；不填则按下面勾选的问题点修改",
+                    "If filled, revisions follow your instructions first; otherwise, revisions use the checked issues below"
+                  )}
+                </span>
+              </div>
+            </div>
             {/* Score strip */}
             <div className="mb-3 flex flex-wrap items-center gap-3 rounded-lg border border-border/30 bg-secondary/30 p-3">
               <ScoreCell
@@ -311,7 +438,7 @@ export function RevisionPlanPanel(props: {
                               : "border-border/30 bg-secondary/20 hover:border-border/60"
                           }`}
                         >
-                          <label className="flex items-start gap-2 text-left">
+                          <label className="flex items-start gap-2 text-left cursor-pointer">
                             <input
                               type="checkbox"
                               className="mt-0.5 h-3.5 w-3.5 accent-primary"
@@ -319,21 +446,46 @@ export function RevisionPlanPanel(props: {
                               onChange={() => toggleOne(it.id)}
                             />
                             <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center gap-1.5 text-[13px] leading-5">
+                              {/* 问题描述 */}
+                              <div className="flex flex-wrap items-center gap-1.5 text-[13px] leading-5 mb-1">
                                 <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
                                   {it.category}
                                 </span>
                                 {it.repairScope ? (
-                                  <span className="rounded bg-secondary/60 px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
-                                    {it.repairScope}
+                                  <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
+                                    it.repairScope === "local"
+                                      ? "bg-blue-500/15 text-blue-500"
+                                      : it.repairScope === "structural"
+                                        ? "bg-orange-500/15 text-orange-500"
+                                        : it.repairScope === "humanity-enhance"
+                                          ? "bg-purple-500/15 text-purple-500"
+                                          : "bg-secondary/60 text-muted-foreground"
+                                  }`}>
+                                    {it.repairScope === "local"
+                                      ? t("局部修改", "Local fix")
+                                      : it.repairScope === "structural"
+                                        ? t("结构调整", "Structural change")
+                                        : it.repairScope === "humanity-enhance"
+                                          ? t("真人感", "Humanity")
+                                          : it.repairScope}
                                   </span>
                                 ) : null}
-                                <span className="text-foreground">{it.description}</span>
+                                <span className="text-foreground font-medium">{it.description}</span>
                               </div>
+                              
+                              {/* 修改建议 — 醒目展示 */}
                               {it.suggestion ? (
-                                <p className="mt-1 text-[12px] leading-5 text-muted-foreground">
-                                  {t("建议", "Suggestion")}：{it.suggestion}
-                                </p>
+                                <div className="mt-2 rounded-md border border-primary/20 bg-primary/5 px-3 py-2">
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <Sparkles size={12} className="text-primary" />
+                                    <span className="text-[11px] font-semibold text-primary">
+                                      {t("修改建议", "How to fix")}
+                                    </span>
+                                  </div>
+                                  <p className="text-[13px] leading-5 text-foreground">
+                                    {it.suggestion}
+                                  </p>
+                                </div>
                               ) : null}
                             </div>
                           </label>

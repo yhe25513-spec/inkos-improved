@@ -105,6 +105,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
   const [expandedBooks, setExpandedBooks] = useState<Set<string>>(new Set());
   const [projectChatExpanded, setProjectChatExpanded] = useState(true);
   const [myBooksExpanded, setMyBooksExpanded] = useState(true);
+  const [showCreateModal, setShowCreateModal] = useState(false);
 
   const books = data?.books ?? [];
   const projectChatKey = "__null__";
@@ -284,23 +285,15 @@ export function Sidebar({ nav, activePage, sse, t }: {
 
       {/* Main Navigation */}
       <div className="flex-1 overflow-y-auto px-4 py-2 space-y-6">
-        {/* InkOS Create Section — always visible, two columns × four rows */}
+        {/* Start Creation — single button opens modal with all options */}
         <div>
-          <div className="px-3 mb-2.5">
-            <span className="text-[16px] leading-6 uppercase tracking-[0.1em] text-muted-foreground font-bold">
-              {t("nav.createSection")}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-1">
-            <CreateItem icon={<BookPlus size={16} />} label={t("nav.createNovel")} active={activePage === "book-create"} onClick={handleOpenBookCreate} />
-            <CreateItem icon={<ScrollText size={16} />} label={t("nav.createShort")} onClick={() => launchProjectMode("short")} />
-            <CreateItem icon={<Feather size={16} />} label={t("nav.createFanfic")} onClick={() => nav.toImport("fanfic")} />
-            <CreateItem icon={<BookCopy size={16} />} label={t("nav.createSpinoff")} onClick={() => nav.toImport("spinoff")} />
-            <CreateItem icon={<Wand2 size={16} />} label={t("nav.createImitation")} onClick={() => nav.toImport("imitation")} />
-            <CreateItem icon={<FileInput size={16} />} label={t("nav.createContinuation")} onClick={() => nav.toImport("chapters")} />
-            <CreateItem icon={<GitBranch size={16} />} label={t("nav.createBranching")} onClick={() => launchProjectMode("play", "guided")} />
-            <CreateItem icon={<Gamepad2 size={16} />} label={t("nav.createFree")} onClick={() => launchProjectMode("play", "open")} />
-          </div>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-bold bg-primary text-primary-foreground hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg shadow-primary/20"
+          >
+            <Plus size={16} />
+            {t("nav.newBook")}
+          </button>
         </div>
 
         {/* My Bookshelf Section */}
@@ -654,13 +647,72 @@ export function Sidebar({ nav, activePage, sse, t }: {
       <ConfirmDialog
         open={deleteTarget !== null}
         title="删除会话"
-        message={`确认删除“${deleteTarget?.title ?? ""}”吗？该操作只删除这条会话，不影响书籍内容。`}
+        message={`确认删除"${deleteTarget?.title ?? ""}"吗？该操作只删除这条会话，不影响书籍内容。`}
         confirmLabel="删除"
         cancelLabel="取消"
         variant="danger"
         onConfirm={() => void handleDeleteConfirm()}
         onCancel={() => setDeleteTarget(null)}
       />
+
+      {/* Creation Mode Modal */}
+      <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
+        <DialogContent className="sm:max-w-[420px] p-5 gap-4">
+          <DialogHeader className="space-y-1">
+            <DialogTitle className="font-serif text-lg">{t("nav.createSection")}</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-2">
+            <CreationModalItem
+              icon={<BookPlus size={18} />}
+              label={t("nav.createNovel")}
+              desc={t("nav.createNovel")}
+              onClick={() => { setShowCreateModal(false); handleOpenBookCreate(); }}
+            />
+            <CreationModalItem
+              icon={<ScrollText size={18} />}
+              label={t("nav.createShort")}
+              desc={t("nav.createShort")}
+              onClick={() => { setShowCreateModal(false); launchProjectMode("short"); }}
+            />
+            <CreationModalItem
+              icon={<Feather size={18} />}
+              label={t("nav.createFanfic")}
+              desc={t("nav.createFanfic")}
+              onClick={() => { setShowCreateModal(false); nav.toImport("fanfic"); }}
+            />
+            <CreationModalItem
+              icon={<BookCopy size={18} />}
+              label={t("nav.createSpinoff")}
+              desc={t("nav.createSpinoff")}
+              onClick={() => { setShowCreateModal(false); nav.toImport("spinoff"); }}
+            />
+            <CreationModalItem
+              icon={<Wand2 size={18} />}
+              label={t("nav.createImitation")}
+              desc={t("nav.createImitation")}
+              onClick={() => { setShowCreateModal(false); nav.toImport("imitation"); }}
+            />
+            <CreationModalItem
+              icon={<FileInput size={18} />}
+              label={t("nav.createContinuation")}
+              desc={t("nav.createContinuation")}
+              onClick={() => { setShowCreateModal(false); nav.toImport("chapters"); }}
+            />
+            <CreationModalItem
+              icon={<GitBranch size={18} />}
+              label={t("nav.createBranching")}
+              desc={t("nav.createBranching")}
+              onClick={() => { setShowCreateModal(false); launchProjectMode("play", "guided"); }}
+            />
+            <CreationModalItem
+              icon={<Gamepad2 size={18} />}
+              label={t("nav.createFree")}
+              desc={t("nav.createFree")}
+              onClick={() => { setShowCreateModal(false); launchProjectMode("play", "open"); }}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }
@@ -771,6 +823,23 @@ function SidebarItem({ label, icon, active, onClick, badge, badgeColor }: {
           {badge}
         </span>
       )}
+    </button>
+  );
+}
+
+function CreationModalItem({ icon, label, desc, onClick }: {
+  icon: React.ReactNode;
+  label: string;
+  desc: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-border/40 bg-card/60 hover:border-primary/30 hover:bg-primary/5 transition-all hover:scale-[1.02] active:scale-[0.98] text-center"
+    >
+      <span className="text-primary">{icon}</span>
+      <span className="text-sm font-medium text-foreground">{label}</span>
     </button>
   );
 }

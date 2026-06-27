@@ -13,6 +13,7 @@ export const GenreProfileSchema = z.object({
   pacingRule: z.string().default(""),
   satisfactionTypes: z.array(z.string()).default([]),
   auditDimensions: z.array(z.number()).default([]),
+  enableHumanityAudit: z.boolean().default(true),
 });
 
 export type GenreProfile = z.infer<typeof GenreProfileSchema>;

@@ -115,9 +115,10 @@ const ProposeActionParams = Type.Object({
   ], {
     description: "The production or assisted Studio workflow the user appears to want, but which needs explicit confirmation from general chat.",
   }),
-  instruction: Type.String({
+  instruction: Type.Optional(Type.String({
+    default: "",
     description: "The exact production instruction to run after the user confirms. It must be self-contained: include title, story direction, active target, output directory, cover visual direction, or any referenced context that would otherwise be lost when switching sessions.",
-  }),
+  })),
   title: Type.Optional(Type.String({
     description: "Short user-facing title for the confirmation card.",
   })),
@@ -400,8 +401,10 @@ const SubAgentParams = Type.Object({
     Type.Literal("auditor"),
     Type.Literal("reviser"),
     Type.Literal("exporter"),
+    Type.Literal("planner"),
+    Type.Literal("deleter"),
   ]),
-  instruction: Type.String({ description: "Natural language instruction for the sub-agent" }),
+  instruction: Type.Optional(Type.String({ description: "Natural language instruction for the sub-agent" })),
   bookId: Type.Optional(Type.String({
     description: "Optional book ID. In active-book sessions, omit it to use the current active book; if provided, it must match the current active book. For architect creation, this optionally sets the new book ID.",
   })),
@@ -434,7 +437,8 @@ const SubAgentParams = Type.Object({
     Type.Literal("rewrite"),
     Type.Literal("rework"),
     Type.Literal("anti-detect"),
-  ], { description: "reviser only: revision mode. Default: spot-fix" })),
+    Type.Literal("auto"),
+  ], { description: "reviser only: revision mode. Default: rewrite" })),
   // -- exporter params --
   format: Type.Optional(Type.Union([
     Type.Literal("txt"),
@@ -482,6 +486,16 @@ function prepareSubAgentArguments(args: unknown): SubAgentParamsType {
       delete prepared.platform;
     }
   }
+
+  if (prepared.agent === "reviser") {
+    const instructionText = typeof prepared.instruction === "string" ? prepared.instruction : "";
+    if (/重写|rewrite|重新写/i.test(instructionText)) {
+      prepared.mode = "rewrite";
+    } else if (!prepared.mode) {
+      prepared.mode = "rewrite";
+    }
+  }
+
   return prepared as SubAgentParamsType;
 }
 
@@ -533,7 +547,7 @@ export function createSubAgentTool(
               }
               const targetBookId = resolveToolBookId("architect", bookId, activeBookId);
               progress(`Revising foundation for "${targetBookId}"...`);
-              await pipeline.reviseFoundation(targetBookId, feedback ?? instruction);
+              await pipeline.reviseFoundation(targetBookId, feedback ?? instruction ?? "");
               progress(`Foundation revised for "${targetBookId}".`);
               return textResult(
                 `Book "${targetBookId}" 架构稿已按要求重写。原书的条目式架构稿已备份到 story/.backup-phase4-<时间戳>/。`,
@@ -571,6 +585,16 @@ export function createSubAgentTool(
             return textResult(
               `Book "${resolvedTitle}" (${id}) initialised successfully. Foundation files are ready.`,
               { kind: "book_created", bookId: id, title: resolvedTitle },
+            );
+          }
+
+          case "planner": {
+            const targetBookId = resolveToolBookId("planner", bookId, activeBookId);
+            progress(`Planning next chapter for "${targetBookId}"...`);
+            const planResult = await pipeline.planChapter(targetBookId, instruction);
+            return textResult(
+              `## 第 ${planResult.chapterNumber} 章写作计划\n\n${planResult.goal}\n\n---\n请确认以上计划。如需修改请说明，确认后我会调用 writer 生成正文。`,
+              { kind: "chapter_plan", bookId: targetBookId, chapterNumber: planResult.chapterNumber, goal: planResult.goal },
             );
           }
 
@@ -615,9 +639,10 @@ export function createSubAgentTool(
 
           case "reviser": {
             const targetBookId = resolveToolBookId("reviser", bookId, activeBookId);
-            const resolvedMode: ReviseMode = (mode as ReviseMode) ?? "spot-fix";
+            const resolvedMode: ReviseMode = (mode as ReviseMode) ?? "rewrite";
+            const resolvedInstruction = instruction || `修订第${chapterNumber ?? ""}章`;
             progress(`Revising "${targetBookId}" chapter ${chapterNumber ?? "latest"} in ${resolvedMode} mode...`);
-            const result = await pipeline.reviseDraft(targetBookId, chapterNumber, resolvedMode);
+            const result = await pipeline.reviseDraft(targetBookId, chapterNumber, resolvedMode, resolvedInstruction);
             const applied = result.applied !== false;
             const resultChapter = result.chapterNumber ?? chapterNumber;
             const details = {
@@ -645,15 +670,27 @@ export function createSubAgentTool(
             );
           }
 
+          case "deleter": {
+            const targetBookId = resolveToolBookId("deleter", bookId, activeBookId);
+            if (!chapterNumber) return textResult("Error: chapterNumber is required for deleter.");
+            progress(`Deleting chapter ${chapterNumber} for "${targetBookId}"...`);
+            await pipeline.deleteChapter(targetBookId, chapterNumber);
+            return textResult(
+              `第 ${chapterNumber} 章已删除。`,
+              { kind: "chapter_deleted", bookId: targetBookId, chapterNumber },
+            );
+          }
+
           case "exporter": {
             const targetBookId = resolveToolBookId("exporter", bookId, activeBookId);
             if (!projectRoot) return textResult("Error: exporter requires projectRoot.");
-            const inferredFormat = format ?? (/epub/i.test(instruction)
+            const instructionStr = instruction ?? "";
+            const inferredFormat = format ?? (/epub/i.test(instructionStr)
               ? "epub"
-              : /markdown|\bmd\b/i.test(instruction)
+              : /markdown|\bmd\b/i.test(instructionStr)
                 ? "md"
                 : "txt");
-            const exportApprovedOnly = approvedOnly ?? /approved|已通过|通过章节/.test(instruction);
+            const exportApprovedOnly = approvedOnly ?? /approved|已通过|通过章节/.test(instructionStr);
             const state = new StateManager(projectRoot);
             const result = await writeExportArtifact(state, targetBookId, {
               format: inferredFormat,
@@ -667,7 +704,7 @@ export function createSubAgentTool(
           default:
             return textResult(`Unknown agent: ${agent}`);
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (agent === "architect" && err instanceof ArchitectIncompleteFoundationError) {
           const missing = err.missing.join(", ");
           return textResult(
@@ -1566,8 +1603,9 @@ export function createWriteTruthFileTool(
         const fileName = assertSafeTruthFileName(params.fileName);
         await tools.writeTruthFile(bookId, fileName, params.content);
         return textResult(`Updated "${fileName}" for "${bookId}".`);
-      } catch (err: any) {
-        return textResult(`write_truth_file failed: ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return textResult(`write_truth_file failed: ${message}`);
       }
     },
   };
@@ -1710,8 +1748,9 @@ export function createReadTool(
         const filePath = resolveReadPath(booksRoot, params.path, options);
         const content = await readFile(filePath, "utf-8");
         return textResult(content);
-      } catch (err: any) {
-        return textResult(`Failed to read "${params.path}": ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return textResult(`Failed to read "${params.path}": ${message}`);
       }
     },
   };
@@ -1795,8 +1834,9 @@ export function createWriteFileTool(projectRoot: string): AgentTool<typeof Write
         await mkdir(parentDir, { recursive: true });
         await writeFile(filePath, params.content, "utf-8");
         return textResult(`File "${params.path}" written successfully.`);
-      } catch (err: any) {
-        return textResult(`Failed to write "${params.path}": ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return textResult(`Failed to write "${params.path}": ${message}`);
       }
     },
   };
@@ -1868,8 +1908,9 @@ export function createGrepTool(projectRoot: string): AgentTool<typeof GrepParams
           : results.join("\n");
 
         return textResult(truncated);
-      } catch (err: any) {
-        return textResult(`Grep failed: ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return textResult(`Grep failed: ${message}`);
       }
     },
   };
@@ -1880,13 +1921,13 @@ export function createGrepTool(projectRoot: string): AgentTool<typeof GrepParams
 // ---------------------------------------------------------------------------
 
 const LsParams = Type.Object({
-  bookId: Type.String({ description: "Book ID" }),
+  bookId: Type.Optional(Type.String({ description: "Book ID (omit to use the active book)" })),
   subdir: Type.Optional(
     Type.String({ description: "Subdirectory within the book, e.g. 'story', 'chapters', 'story/runtime'" }),
   ),
 });
 
-export function createLsTool(projectRoot: string): AgentTool<typeof LsParams> {
+export function createLsTool(projectRoot: string, activeBookId?: string | null): AgentTool<typeof LsParams> {
   const booksRoot = join(projectRoot, "books");
 
   return {
@@ -1898,8 +1939,16 @@ export function createLsTool(projectRoot: string): AgentTool<typeof LsParams> {
       _toolCallId: string,
       params: Static<typeof LsParams>,
     ): Promise<AgentToolResult<undefined>> {
+      const resolvedBookId = params.bookId ?? activeBookId;
+      if (!resolvedBookId) {
+        try {
+          return textResult("Please specify a book ID. Available books: " + (await readdir(booksRoot)).join(", "));
+        } catch {
+          return textResult("Please specify a book ID.");
+        }
+      }
       try {
-        const base = safeBooksPath(booksRoot, params.bookId);
+        const base = safeBooksPath(booksRoot, resolvedBookId);
         const target = params.subdir ? safeBooksPath(base, params.subdir) : base;
 
         const entries = await readdir(target);
@@ -1917,12 +1966,13 @@ export function createLsTool(projectRoot: string): AgentTool<typeof LsParams> {
         }
 
         if (details.length === 0) {
-          return textResult(`Directory is empty: ${params.bookId}/${params.subdir ?? ""}`);
+          return textResult(`Directory is empty: ${resolvedBookId}/${params.subdir ?? ""}`);
         }
 
         return textResult(details.join("\n"));
-      } catch (err: any) {
-        return textResult(`Failed to list "${params.bookId}/${params.subdir ?? ""}": ${err?.message ?? String(err)}`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return textResult(`Failed to list "${resolvedBookId}/${params.subdir ?? ""}": ${message}`);
       }
     },
   };

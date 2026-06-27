@@ -28,6 +28,13 @@ export interface PolishChapterOutput {
  * If a structural/plot issue is found, the polisher marks it in a comment
  * line (`[polisher-note] ...`) for the next reviewer iteration and leaves
  * the prose untouched — it does NOT attempt to rewrite across that boundary.
+ *
+ * @deprecated 自 inkos v0.x 起，PolisherAgent 的职责已被 chapter-review-cycle
+ *（结构修订）+ postProcessChapter（anti-ai/humanity/emotion 后处理）取代。
+ * 新代码不应使用此类；保留仅为向后兼容。迁移指南：
+ *   - 表面润色 → postProcessChapter 的 anti-ai 阶段（Humanizer + BurstinessAdjuster）
+ *   - 结构修订 → chapter-review-cycle 的 reviser
+ *   - 情感注入 → postProcessChapter 的 emotional 阶段（EmotionInjector）
  */
 export class PolisherAgent extends BaseAgent {
   get name(): string {

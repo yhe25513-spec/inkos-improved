@@ -433,6 +433,16 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
       if (data.error) {
         const errorMessage = extractErrorMessage(data.error);
+
+        // 检测 REVISION_REQUIRED 错误 - 前序章节需要修订
+        const errorObj = typeof data.error === "object" ? data.error : null;
+        if (errorObj?.code === "REVISION_REQUIRED" && errorObj.chapterNumber) {
+          // 设置待修订章节号，让 ChatPage 打开修订面板
+          set((state) => ({
+            pendingRevisionChapter: errorObj.chapterNumber,
+          }));
+        }
+
         if (hasStream) {
           get().replaceStreamWithError(sessionId, streamTs, errorMessage);
         } else {

@@ -18,6 +18,8 @@ import {
 import { analyzeAITells } from "./ai-tells.js";
 import type { ChapterIntent, ChapterMemo, ContextPackage, RuleStack } from "../models/input-governance.js";
 import type { LengthSpec } from "../models/length-governance.js";
+import type { UserProfileManager } from "../learning/user-profile.js";
+import type { HumanityEngine } from "../humanity/humanity-engine.js";
 import type { RuntimeStateDelta } from "../models/runtime-state.js";
 import { buildLengthSpec, countChapterLength } from "../utils/length-metrics.js";
 import {
@@ -83,6 +85,12 @@ export interface WriteChapterInput {
   readonly lengthSpec?: LengthSpec;
   readonly wordCountOverride?: number;
   readonly temperatureOverride?: number;
+  /** 角色圆桌讨论输出的约束块，注入到 Writer 的 system prompt */
+  readonly roleConstraints?: string;
+  /** 用户偏好画像管理器（Phase 3 学习系统），用于增强系统提示词 */
+  readonly profileManager?: UserProfileManager;
+  /** 真人感引擎引用，用于在 LLM 调用前增强系统提示词 */
+  readonly humanityEngine?: HumanityEngine;
 }
 
 export interface SettleChapterStateInput {
@@ -218,12 +226,23 @@ export class WriterAgent extends BaseAgent {
       : undefined;
 
     // ── Phase 1: Creative writing (temperature 0.7) ──
-    const creativeSystemPrompt = buildWriterSystemPrompt(
+    let creativeSystemPrompt = buildWriterSystemPrompt(
       book, genreProfile, bookRules, bookRulesBody, genreBody, styleGuide, styleFingerprint,
       chapterNumber, "creative", fanficContext, resolvedLanguage,
       input.chapterMemo ? "governed" : "legacy",
       resolvedLengthSpec,
+      input.roleConstraints,  // ← 角色圆桌约束
+      input.profileManager,    // ← Phase 9: 用户偏好画像
     );
+
+    // Phase 9: 真人感提示词增强（预 LLM 阶段，失败时使用原始提示词）
+    if (input.humanityEngine) {
+      try {
+        creativeSystemPrompt = input.humanityEngine.enhanceSystemPrompt(creativeSystemPrompt);
+      } catch (e) {
+        this.ctx.logger?.warn(`[humanity] enhanceSystemPrompt 失败，使用原始提示词: ${e}`);
+      }
+    }
 
     const creativeUserPrompt = input.chapterMemo && input.contextPackage && input.ruleStack
       ? this.buildGovernedUserPrompt({
@@ -389,8 +408,20 @@ export class WriterAgent extends BaseAgent {
     ];
     const aiTellIssues = analyzeAITells(surfaceNormalizedContent, resolvedLanguage).issues;
 
+    // Merge aiTellIssues into postWriteErrors/postWriteWarnings so downstream review cycle can act on them
+    // AITellIssue.severity is "warning" | "info"; map both to postWriteWarnings (PostWriteViolation only has "error" | "warning")
+    const aiTellWarnings = aiTellIssues.map(i => ({
+      rule: i.category,
+      severity: "warning" as const,
+      description: i.description,
+      suggestion: i.suggestion,
+    }));
+
     const postWriteErrors = ruleViolations.filter(v => v.severity === "error");
-    const postWriteWarnings = ruleViolations.filter(v => v.severity === "warning");
+    const postWriteWarnings = [
+      ...ruleViolations.filter(v => v.severity === "warning"),
+      ...aiTellWarnings,
+    ];
 
     if (ruleViolations.length > 0) {
       this.logWarn(resolvedLanguage, {

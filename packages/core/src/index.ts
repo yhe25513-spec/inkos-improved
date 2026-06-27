@@ -421,7 +421,10 @@ export { ArchitectAgent, type ArchitectOutput } from "./agents/architect.js";
 export { WriterAgent, type WriteChapterInput, type WriteChapterOutput, type TokenUsage } from "./agents/writer.js";
 export { LengthNormalizerAgent, type NormalizeLengthInput, type NormalizeLengthOutput } from "./agents/length-normalizer.js";
 export { ContinuityAuditor, type AuditResult, type AuditIssue } from "./agents/continuity.js";
+export { HumanityAuditor, type HumanityAuditOptions } from "./agents/humanity-auditor.js";
+export { HUMANITY_DIMENSIONS, HUMANITY_DIMENSION_IDS, HUMANITY_LAYER_LABELS, getHumanityDimensionConfig, type HumanityDimension, type HumanityDimensionLayer } from "./agents/humanity-dimensions.js";
 export { ReviserAgent, DEFAULT_REVISE_MODE, type ReviseOutput, type ReviseMode } from "./agents/reviser.js";
+/** @deprecated PolisherAgent 已被 chapter-review-cycle + postProcessChapter 取代，新代码不应使用。 */
 export { PolisherAgent, type PolishChapterInput, type PolishChapterOutput } from "./agents/polisher.js";
 export { RadarAgent, type RadarResult, type RadarRecommendation } from "./agents/radar.js";
 export { FanqieRadarSource, QidianRadarSource, TextRadarSource, type RadarSource, type PlatformRankings, type RankingEntry } from "./agents/radar-source.js";
@@ -446,7 +449,14 @@ export { EntityExtractor, type ExtractionResult } from "./agents/entity-extracto
 export * from "./prompts/index.js";
 
 // Utils
-export { isNewLayoutBook, isBookFoundationComplete } from "./utils/outline-paths.js";
+export { isNewLayoutBook, isBookFoundationComplete, readRoleCards } from "./utils/outline-paths.js";
+export {
+  loadCharacterVoices,
+  parseRoleCardsToVoices,
+  entitiesToCharacterVoices,
+  type CharacterVoice,
+  type CharacterVoicesFile,
+} from "./utils/character-voices.js";
 export { fetchUrl, searchWeb } from "./utils/web-search.js";
 export { filterHooks, filterSummaries, filterSubplots, filterEmotionalArcs, filterCharacterMatrix } from "./utils/context-filter.js";
 export { extractPOVFromOutline, filterMatrixByPOV, filterHooksByPOV } from "./utils/pov-filter.js";
@@ -542,26 +552,6 @@ export async function sendWebhook(
 // 新增模块导出 (V3.1)
 // ══════════════════════════════════════════════════════════════
 
-// ── 合规管理系统 ──
-export type {
-  Platform as CompliancePlatform,
-  PlatformPolicy,
-  ComplianceIssueType,
-  IssueSeverity,
-  ComplianceIssue,
-  DetectorResult,
-  ComplianceReportData,
-  ContentAnalysisResult,
-} from "./compliance/index.js";
-
-export {
-  PolicyEngine,
-  PLATFORM_POLICIES,
-  ContentAnalyzer,
-  LabelGenerator,
-  ReportBuilder,
-} from "./compliance/index.js";
-
 // ── 去AI味系统 ──
 export type {
   PerplexityResult,
@@ -596,22 +586,7 @@ export {
   NaturalnessTester,
 } from "./emotional/index.js";
 
-// ── 创意原创性 ──
-export type {
-  Trope,
-  TropeDetectionResult,
-  OriginalityResult,
-  SuggestionType,
-  Suggestion,
-} from "./creativity/index.js";
-
-export {
-  TropeDetector,
-  OriginalityScorer,
-  SuggestionEngine,
-} from "./creativity/index.js";
-
-// ── 长篇连贯性管理 ──
+// ── 长篇连贯性管理（@studio-only：仅 Studio 使用，不从 core 公共 API 暴露给下游消费者）──
 export type {
   ForeshadowImportance,
   ForeshadowStatus,
@@ -622,6 +597,9 @@ export type {
   TimelineEvent,
   ConsistencyIssue,
   TimelineConflict,
+  FixProposal,
+  FixAction,
+  ConsistencyCheckResult,
 } from "./consistency/index.js";
 
 export {
@@ -654,3 +632,53 @@ export {
 
 // ── 工具函数 ──
 export { LRUCache, withCache } from "./utils/cache.js";
+
+// ══════════════════════════════════════════════════════════════
+// 新增模块导出 (V4)
+// ══════════════════════════════════════════════════════════════
+
+// ── 真人感系统 ──
+export type {
+  HumanityProfile,
+  HumanityFingerprint,
+  StyleInjection,
+  BreathingPoint,
+  BreathingType,
+  WritingContext,
+} from "./humanity/index.js";
+
+export {
+  createDefaultHumanityProfile,
+  deriveStyleInjectionFromFingerprint,
+  DEFAULT_HUMANITY_FINGERPRINT,
+  DEFAULT_STYLE_INJECTION,
+} from "./humanity/index.js";
+
+export {
+  HumanityEngine,
+  type HumanityEngineConfig,
+  type InitializeOptions,
+} from "./humanity/index.js";
+
+export {
+  SampleAnalyzer,
+} from "./humanity/index.js";
+
+export {
+  SceneBreaker,
+  type SceneInfo,
+  type ChapterOutline,
+} from "./humanity/index.js";
+
+export { SilenceLayerInjector } from "./humanity/index.js";
+export { SelfContradictionGenerator } from "./humanity/index.js";
+
+export {
+  BREATHING_TEMPLATES,
+  SILENCE_REPLACEMENTS,
+  SELF_CONTRADICTION_TEMPLATES,
+  getRandomTemplate,
+  getRandomBreathingText,
+  getRandomSilenceReplacement,
+  generateSelfContradiction,
+} from "./humanity/index.js";

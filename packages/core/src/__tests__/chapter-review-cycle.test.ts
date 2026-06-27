@@ -268,7 +268,7 @@ describe("runChapterReviewCycle v9", () => {
     expect(result.auditResult.overallScore).toBe(80);
   });
 
-  it("defaults to one automatic repair pass", async () => {
+  it("defaults to up to three automatic repair passes", async () => {
     const auditChapter = vi.fn()
       .mockResolvedValueOnce(createAuditResult({
         passed: false,
@@ -321,9 +321,10 @@ describe("runChapterReviewCycle v9", () => {
       normalizeDraftLengthIfNeeded,
     });
 
-    expect(reviseChapter).toHaveBeenCalledTimes(1);
-    expect(result.auditResult.overallScore).toBe(80);
-    expect(result.finalContent).toBe("a".repeat(200));
+    // Phase 2: DEFAULT_MAX_REVIEW_ITERATIONS 从 1 提升到 3，允许 2 次修订后第 3 次审计通过
+    expect(reviseChapter).toHaveBeenCalledTimes(2);
+    expect(result.auditResult.overallScore).toBe(90);
+    expect(result.finalContent).toBe("b".repeat(200));
   });
 
   it("stops immediately when initial score passes threshold", async () => {

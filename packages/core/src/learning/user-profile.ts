@@ -4,6 +4,12 @@
 import type { WritingPreference, WordEntry } from "./types.js";
 import { PreferenceAnalyzer } from "./preference-analyzer.js";
 
+/** 持久化存储适配器（可选） */
+export interface UserProfileStorage {
+  read: () => Promise<Record<string, WritingPreference>>;
+  write: (data: Record<string, WritingPreference>) => Promise<void>;
+}
+
 /**
  * 用户画像管理器
  * 负责持久化用户偏好，支持平滑更新
@@ -11,9 +17,28 @@ import { PreferenceAnalyzer } from "./preference-analyzer.js";
 export class UserProfileManager {
   private storage: Map<string, WritingPreference> = new Map();
   private analyzer: PreferenceAnalyzer;
+  private persistence?: UserProfileStorage;
 
-  constructor() {
+  constructor(persistence?: UserProfileStorage) {
     this.analyzer = new PreferenceAnalyzer();
+    this.persistence = persistence;
+  }
+
+  /**
+   * 初始化：如果配置了 persistence，从持久化存储加载到内部 Map
+   */
+  async init(): Promise<void> {
+    if (!this.persistence) return;
+    try {
+      const persisted = await this.persistence.read();
+      if (persisted) {
+        for (const [key, value] of Object.entries(persisted)) {
+          this.storage.set(key, value);
+        }
+      }
+    } catch {
+      // 加载失败不影响功能，从空 Map 开始
+    }
   }
 
   /**
@@ -48,16 +73,35 @@ export class UserProfileManager {
     const key = bookId ? `${userId}:${bookId}` : `${userId}:global`;
     const existing = this.storage.get(key);
 
+    let result: WritingPreference;
     if (existing) {
       // 平滑更新
-      const smoothed = this.smoothUpdate(existing, newPreference, weight);
-      this.storage.set(key, smoothed);
-      return smoothed;
+      result = this.smoothUpdate(existing, newPreference, weight);
+      this.storage.set(key, result);
+    } else {
+      // 首次设置
+      result = newPreference;
+      this.storage.set(key, newPreference);
     }
 
-    // 首次设置
-    this.storage.set(key, newPreference);
-    return newPreference;
+    // 持久化（如果配置了 persistence）
+    if (this.persistence) {
+      this.persist().catch(() => undefined);
+    }
+
+    return result;
+  }
+
+  /**
+   * 将内部 Map 序列化为 Record 并持久化
+   */
+  private async persist(): Promise<void> {
+    if (!this.persistence) return;
+    const record: Record<string, WritingPreference> = {};
+    for (const [key, value] of this.storage) {
+      record[key] = value;
+    }
+    await this.persistence.write(record);
   }
 
   /**

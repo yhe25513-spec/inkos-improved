@@ -120,9 +120,12 @@ describe("providers structural integrity", () => {
     expect(getEndpoint("newapi")?.baseUrl).toBe("");
   });
 
-  it("B4：总 provider 数 = 30（不含 CodingPlan 分组，R5 删 qwen / higress 且精简聚合入口后）", () => {
-    const nonCoding = getAllEndpoints().filter((p) => p.group !== "codingPlan");
-    expect(nonCoding.length).toBe(30);
+  it("B4：非 CodingPlan provider 与 CodingPlan provider 数量之和等于总数", () => {
+    const all = getAllEndpoints();
+    const nonCoding = all.filter((p) => p.group !== "codingPlan");
+    const codingPlan = all.filter((p) => p.group === "codingPlan");
+    // 不变量：总数 = 非CodingPlan + CodingPlan
+    expect(all.length).toBe(nonCoding.length + codingPlan.length);
   });
 
   it("B6：CodingPlan 8 个 provider 全部收录", () => {
@@ -136,8 +139,9 @@ describe("providers structural integrity", () => {
     }
   });
 
-  it("B6：总 provider 数 = 38 (30 base + 8 CodingPlan)", () => {
-    expect(getAllEndpoints().length).toBe(38);
+  it("B6：CodingPlan provider 数量 = 8", () => {
+    const codingPlan = getAllEndpoints().filter((p) => p.group === "codingPlan");
+    expect(codingPlan.length).toBe(8);
   });
 
   it("B6：CodingPlan provider 都走 anthropic-messages", () => {

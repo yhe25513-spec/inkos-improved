@@ -281,7 +281,7 @@ describe("interaction runtime", () => {
       }),
     });
 
-    expect(reviseDraft).toHaveBeenCalledWith("harbor", 3, "local-fix");
+    expect(reviseDraft).toHaveBeenCalledWith("harbor", 3, "auto", undefined);
   });
 
   it("routes rewrite_chapter to reviseDraft with rewrite mode", async () => {
@@ -307,7 +307,7 @@ describe("interaction runtime", () => {
       }),
     });
 
-    expect(reviseDraft).toHaveBeenCalledWith("harbor", 5, "rewrite");
+    expect(reviseDraft).toHaveBeenCalledWith("harbor", 5, "rewrite", undefined);
   });
 
   it("routes update_focus to the focus updater", async () => {

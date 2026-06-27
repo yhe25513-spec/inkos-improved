@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir, readdir, rm, stat, unlink, open, access } from "node:fs/promises";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import type { BookConfig } from "../models/book.js";
 import type { ChapterMeta } from "../models/chapter.js";
 import { bootstrapStructuredStateFromMarkdown, resolveDurableStoryProgress } from "./state-bootstrap.js";
@@ -176,6 +176,12 @@ export class StateManager {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException | undefined)?.code;
       if (code === "ESRCH") {
+        return false;
+      }
+      // Windows: EPERM 表示进程存在但无权限；ESRCH 表示进程不存在。
+      // 但对于陈旧锁回收场景，若 PID 不属于当前 Node 进程且无法确认存活，
+      // 保守视为已死，避免锁无法回收。
+      if (code === "EPERM" && pid !== process.pid) {
         return false;
       }
       return true;
@@ -356,18 +362,26 @@ export class StateManager {
     }
   }
 
-  async isCompleteBookDirectory(bookDir: string): Promise<boolean> {
-    // Phase 5 cleanup: prefer outline/* paths, fall back to legacy flat files
-    // so older books on disk still resolve as complete.
-    const requiredSingle = [
+  /**
+   * Files that are strictly required for a directory to be recognised as a
+   * complete InkOS book project.  Missing a required file → the directory
+   * is NOT a valid book.
+   */
+  private getRequiredSinglePaths(bookDir: string): string[] {
+    return [
       join(bookDir, "book.json"),
       join(bookDir, "story", "book_rules.md"),
       join(bookDir, "story", "current_state.md"),
       join(bookDir, "story", "pending_hooks.md"),
       join(bookDir, "chapters", "index.json"),
     ];
+  }
 
-    const eitherOr: Array<ReadonlyArray<string>> = [
+  /**
+   * Pairs / groups of files where at least one member must exist.
+   */
+  private getEitherOrPaths(bookDir: string): Array<ReadonlyArray<string>> {
+    return [
       // story_frame (new) OR story_bible (legacy)
       [
         join(bookDir, "story", "outline", "story_frame.md"),
@@ -379,6 +393,44 @@ export class StateManager {
         join(bookDir, "story", "volume_outline.md"),
       ],
     ];
+  }
+
+  /**
+   * Recommended files / directories that complete the book's setting system.
+   * A book is still "complete" without them (backward compatibility), but
+   * the system logs a hint so the user knows what's missing.
+   */
+  async checkRecommendedStructure(bookDir: string): Promise<{
+    settingComplete: boolean;
+    missingSettingFiles: string[];
+  }> {
+    const settingFiles = [
+      "世界观设定.md",
+      "势力档案.md",
+      "力量体系.md",
+      "经济体系.md",
+      "卡牌图鉴.md",
+      "物品清单.md",
+      "时间线.md",
+      "事件日历.md",
+    ];
+    const missing: string[] = [];
+    for (const f of settingFiles) {
+      try {
+        await stat(join(bookDir, "story", "setting", f));
+      } catch {
+        missing.push(f);
+      }
+    }
+    return {
+      settingComplete: missing.length === 0,
+      missingSettingFiles: missing,
+    };
+  }
+
+  async isCompleteBookDirectory(bookDir: string): Promise<boolean> {
+    const requiredSingle = this.getRequiredSinglePaths(bookDir);
+    const eitherOr = this.getEitherOrPaths(bookDir);
 
     for (const requiredPath of requiredSingle) {
       try {
@@ -577,5 +629,29 @@ export class StateManager {
         console.warn(`[inkos] ⚠️ 写入文件失败 (${path}): ${e}`);
       }
     }
+  }
+
+  /**
+   * 通用 JSON 读取方法（相对于 projectRoot）
+   * 读取失败时返回 null，不抛异常
+   */
+  async readJSON<T>(relativePath: string): Promise<T | null> {
+    try {
+      const fullPath = join(this.projectRoot, relativePath);
+      const raw = await readFile(fullPath, "utf-8");
+      return JSON.parse(raw) as T;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 通用 JSON 写入方法（相对于 projectRoot）
+   * 自动创建父目录
+   */
+  async writeJSON<T>(relativePath: string, data: T): Promise<void> {
+    const fullPath = join(this.projectRoot, relativePath);
+    await mkdir(dirname(fullPath), { recursive: true });
+    await writeFile(fullPath, JSON.stringify(data, null, 2), "utf-8");
   }
 }

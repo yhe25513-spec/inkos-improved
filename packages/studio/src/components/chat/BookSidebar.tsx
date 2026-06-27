@@ -252,9 +252,9 @@ function PanelView({ bookId, theme: _theme, t, sse }: BookSidebarProps) {
       )}
       <ProgressSection sse={sse} />
       <ChaptersSection bookId={bookId} isZh={isZh} />
-      <CharacterSection bookId={bookId} />
-      <FoundationSection bookId={bookId} />
-      <SummarySection bookId={bookId} />
+      <CharacterSection bookId={bookId} defaultOpen={false} />
+      <FoundationSection bookId={bookId} defaultOpen={false} />
+      <SummarySection bookId={bookId} defaultOpen={false} />
     </div>
   );
 }

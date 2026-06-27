@@ -3,6 +3,7 @@ import type { ReviseMode, ReviseOutput } from "../agents/reviser.js";
 import type { WriteChapterOutput } from "../agents/writer.js";
 import type { ChapterIntent, ChapterMemo, ContextPackage, RuleStack } from "../models/input-governance.js";
 import type { LengthSpec } from "../models/length-governance.js";
+import type { InfoBoundaryReport, InfoBoundaryIssue } from "../utils/info-boundary.js";
 import { countChapterLength, isOutsideHardRange } from "../utils/length-metrics.js";
 
 export interface ChapterReviewCycleUsage {
@@ -28,11 +29,16 @@ export interface ChapterReviewCycleResult {
   readonly totalUsage: ChapterReviewCycleUsage;
   readonly postReviseCount: number;
   readonly normalizeApplied: boolean;
+  readonly humanityAuditResult?: AuditResult;
+  readonly humanityRevised?: boolean;
 }
 
-const DEFAULT_MAX_REVIEW_ITERATIONS = 1;
+const DEFAULT_MAX_REVIEW_ITERATIONS = 3;
 const PASS_SCORE_THRESHOLD = 85;
 const NET_IMPROVEMENT_EPSILON = 3;
+const DEFAULT_MAX_ERRORS_PER_CHAPTER = 0;
+const DEFAULT_MAX_HUMANITY_ITERATIONS = 2;
+const HUMANITY_PASS_SCORE_THRESHOLD = 80;
 
 interface ReviewSnapshot {
   readonly content: string;
@@ -102,7 +108,21 @@ export async function runChapterReviewCycle(params: {
   };
   /** Re-run deterministic post-write checks (chapter-ref, paragraph shape, etc.) on any content. */
   readonly runPostWriteChecks?: (content: string) => ReadonlyArray<AuditIssue>;
+  /** 信息边界检查（可选）：检查角色是否知道不应该知道的信息 */
+  readonly checkInfoBoundary?: (content: string) => InfoBoundaryReport | null;
   readonly maxReviewIterations?: number;
+  readonly maxErrorsPerChapter?: number;
+  readonly humanityAuditor?: {
+    auditHumanity: (
+      bookDir: string,
+      chapterContent: string,
+      chapterNumber: number,
+      genre?: string,
+      options?: { readonly temperature?: number },
+    ) => Promise<AuditResult>;
+  };
+  readonly enableHumanityAudit?: boolean;
+  readonly maxHumanityIterations?: number;
   readonly logWarn: (message: { zh: string; en: string }) => void;
   readonly logStage: (message: { zh: string; en: string }) => void;
 }): Promise<ChapterReviewCycleResult> {
@@ -172,11 +192,23 @@ export async function runChapterReviewCycle(params: {
       ? params.runPostWriteChecks(content)
       : initialPostWriteIssues;
 
+    // 信息边界检查（可选）
+    const infoBoundaryReport = params.checkInfoBoundary?.(content);
+    const infoBoundaryIssues: AuditIssue[] = infoBoundaryReport
+      ? infoBoundaryReport.issues.map((issue: InfoBoundaryIssue) => ({
+          severity: issue.severity === "high" ? "critical" as const : "warning" as const,
+          category: `信息边界/${issue.type}`,
+          description: issue.description,
+          suggestion: issue.suggestion,
+        }))
+      : [];
+
     const allIssues: AuditIssue[] = [
       ...llmAudit.issues,
       ...aiTellsResult.issues,
       ...sensitiveResult.issues,
       ...postWriteIssues,
+      ...infoBoundaryIssues,
     ];
 
     // Length is NOT added to reviser issues — normalize handles it as a dedicated step.
@@ -196,14 +228,20 @@ export async function runChapterReviewCycle(params: {
     return { auditResult, score, lengthInRange };
   };
 
-  const isPassed = (assessment: { auditResult: AuditResult; score: number; lengthInRange: boolean }): boolean =>
-    assessment.auditResult.passed && assessment.score >= PASS_SCORE_THRESHOLD && assessment.lengthInRange;
+  const isPassed = (assessment: { auditResult: AuditResult; score: number; lengthInRange: boolean }): boolean => {
+    const errorCount = assessment.auditResult.issues.filter(i => i.severity === "critical").length;
+    return assessment.auditResult.passed
+      && assessment.score >= PASS_SCORE_THRESHOLD
+      && assessment.lengthInRange
+      && errorCount <= maxErrorsPerChapter;
+  };
 
   // ---------------------------------------------------------------------------
   // Scoring loop: assess → revise → assess. Default is one automatic repair pass;
   // projects can raise it when they accept slower but more persistent repair.
   // ---------------------------------------------------------------------------
   const maxReviewIterations = Math.max(0, Math.floor(params.maxReviewIterations ?? DEFAULT_MAX_REVIEW_ITERATIONS));
+  const maxErrorsPerChapter = Math.max(0, Math.floor(params.maxErrorsPerChapter ?? DEFAULT_MAX_ERRORS_PER_CHAPTER));
   params.logStage({ zh: "审计草稿", en: "auditing draft" });
   const initial = await assess(finalContent);
 
@@ -339,6 +377,96 @@ export async function runChapterReviewCycle(params: {
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // 真人感27维度审计：在结构审计通过后、返回前执行
+  // ---------------------------------------------------------------------------
+  let humanityAuditResult: AuditResult | undefined;
+  let humanityRevised = false;
+
+  const enableHumanity = params.enableHumanityAudit !== false && params.humanityAuditor;
+  if (enableHumanity) {
+    const maxHumanityIterations = Math.max(0, Math.floor(params.maxHumanityIterations ?? DEFAULT_MAX_HUMANITY_ITERATIONS));
+    params.logStage({ zh: "真人感27维度审计", en: "humanity 27-dimension audit" });
+
+    try {
+      const humanityAssess = async (content: string): Promise<AuditResult> => {
+        const result = await params.humanityAuditor!.auditHumanity(
+          params.bookDir,
+          content,
+          params.chapterNumber,
+          params.book.genre,
+        );
+        totalUsage = params.addUsage(totalUsage, result.tokenUsage);
+        return result;
+      };
+
+      const isHumanityPassed = (result: AuditResult): boolean => {
+        const score = result.overallScore ?? 0;
+        return result.passed && score >= HUMANITY_PASS_SCORE_THRESHOLD;
+      };
+
+      humanityAuditResult = await humanityAssess(finalContent);
+
+      if (humanityAuditResult.parseFailed) {
+        params.logWarn({
+          zh: "真人感审计输出解析失败，跳过真人感修复",
+          en: "Humanity audit output parsing failed; skipping humanity repair",
+        });
+      } else if (!isHumanityPassed(humanityAuditResult) && maxHumanityIterations > 0) {
+        for (let iteration = 0; iteration < maxHumanityIterations; iteration++) {
+          params.logStage({
+            zh: `真人感修复轮次 ${iteration + 1}/${maxHumanityIterations}`,
+            en: `humanity repair iteration ${iteration + 1}/${maxHumanityIterations}`,
+          });
+
+          const reviser = params.createReviser();
+          const reviseOutput = await reviser.reviseChapter(
+            params.bookDir,
+            finalContent,
+            params.chapterNumber,
+            humanityAuditResult.issues,
+            "auto",
+            params.book.genre,
+            params.reducedControlInput
+              ? { ...params.reducedControlInput, lengthSpec: params.lengthSpec }
+              : { lengthSpec: params.lengthSpec },
+          );
+          totalUsage = params.addUsage(totalUsage, reviseOutput.tokenUsage);
+
+          if (reviseOutput.revisedContent.length === 0 || reviseOutput.revisedContent === finalContent) {
+            params.logWarn({
+              zh: `真人感修复轮次 ${iteration + 1} 未产出新内容，退出循环`,
+              en: `humanity repair iteration ${iteration + 1} produced no new content, exiting loop`,
+            });
+            break;
+          }
+
+          params.assertChapterContentNotEmpty(reviseOutput.revisedContent, `humanity repair iteration ${iteration + 1}`);
+          const revisedContent = params.normalizePostWriteSurface?.(reviseOutput.revisedContent) ?? reviseOutput.revisedContent;
+          finalContent = revisedContent;
+          finalWordCount = countChapterLength(finalContent, params.lengthSpec.countingMode);
+          humanityRevised = true;
+
+          // Re-assess humanity
+          humanityAuditResult = await humanityAssess(finalContent);
+
+          if (isHumanityPassed(humanityAuditResult)) {
+            params.logStage({
+              zh: `真人感修复后达到通过线（${humanityAuditResult.overallScore ?? 0} 分），退出循环`,
+              en: `humanity repair reached pass threshold (${humanityAuditResult.overallScore ?? 0}), exiting loop`,
+            });
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      params.logWarn({
+        zh: `真人感审计失败: ${error}`,
+        en: `Humanity audit failed: ${error}`,
+      });
+    }
+  }
+
   return {
     finalContent,
     finalWordCount,
@@ -348,5 +476,7 @@ export async function runChapterReviewCycle(params: {
     totalUsage,
     postReviseCount,
     normalizeApplied,
+    humanityAuditResult,
+    humanityRevised,
   };
 }

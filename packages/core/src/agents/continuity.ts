@@ -35,13 +35,13 @@ export interface AuditIssue {
   readonly category: string;
   readonly description: string;
   readonly suggestion: string;
-  readonly repairScope?: "local" | "structural" | "unknown";
+  readonly repairScope?: "local" | "structural" | "unknown" | "humanity-enhance";
 }
 
 type PromptLanguage = "zh" | "en";
 
 function normalizeRepairScope(value: unknown): AuditIssue["repairScope"] {
-  if (value === "local" || value === "structural" || value === "unknown") return value;
+  if (value === "local" || value === "structural" || value === "unknown" || value === "humanity-enhance") return value;
   return undefined;
 }
 
@@ -83,6 +83,34 @@ const DIMENSION_LABELS: Record<number, { readonly zh: string; readonly en: strin
   35: { zh: "世界规则遵守", en: "World Rule Compliance Check" },
   36: { zh: "关系动态", en: "Relationship Dynamics Check" },
   37: { zh: "正典事件一致性", en: "Canon Event Consistency Check" },
+  // ── 真人感27维度（38-64） ──
+  38: { zh: "句子突发性", en: "Sentence Burstiness" },
+  39: { zh: "开头多样性", en: "Opening Variety" },
+  40: { zh: "口语化密度", en: "Colloquial Density" },
+  41: { zh: "模糊词控制", en: "Hedge Word Control" },
+  42: { zh: "词汇多样性", en: "Vocabulary Variety" },
+  43: { zh: "感官种类", en: "Sensory Variety" },
+  44: { zh: "身体存在感", en: "Body Presence" },
+  45: { zh: "次要人物自洽", en: "Side Character Consistency" },
+  46: { zh: "不体面道具", en: "Unseemly Props" },
+  47: { zh: "自我矛盾性", en: "Self-Contradiction" },
+  48: { zh: "时间碎片", en: "Time Fragments" },
+  49: { zh: "对话不完美", en: "Imperfect Dialogue" },
+  50: { zh: "物理接触", en: "Physical Contact" },
+  51: { zh: "节奏呼吸感", en: "Rhythmic Breathing" },
+  52: { zh: "不必要重量", en: "Unnecessary Weight" },
+  53: { zh: "矛盾性行为", en: "Contradictory Behavior" },
+  54: { zh: "错误余地", en: "Error Margin" },
+  55: { zh: "情感回落期", en: "Emotional Settling" },
+  56: { zh: "特异性细节", en: "Specific Details" },
+  57: { zh: "自我意识", en: "Self-Awareness" },
+  58: { zh: "自我暴露", en: "Self-Exposure" },
+  59: { zh: "信息挤牙膏", en: "Information Drip" },
+  60: { zh: "读者预期管理", en: "Reader Expectation Management" },
+  61: { zh: "污染式传递", en: "Contaminated Transmission" },
+  62: { zh: "温度切换", en: "Temperature Switch" },
+  63: { zh: "沉默层", en: "Silence Layer" },
+  64: { zh: "不可靠性", en: "Unreliability" },
 };
 
 function containsChinese(text: string): boolean {
@@ -488,12 +516,24 @@ Output format MUST be JSON:
 	      "severity": "critical|warning|info",
 	      "repair_scope": "local|structural|unknown",
 	      "category": "dimension name",
-	      "description": "specific issue description",
-	      "suggestion": "fix suggestion"
+	      "description": "specific issue description (MUST include: location + original text + setting comparison)",
+	      "suggestion": "fix suggestion (MUST include: what to change + how to change + why this works)"
 	    }
   ],
   "summary": "one-sentence audit conclusion"
 }
+
+【description MUST be specific】:
+- MUST specify location: which paragraph/line/dialogue
+- MUST quote original text: directly excerpt the problematic sentence or passage
+- MUST compare with settings: explain which setting file/content it conflicts with
+- Example: "Paragraph 5, line 2: 'Xiao Yan shattered the entire mountain peak with one punch', but story_bible.md states Xiao Yan's current level is Dou Wang, and Dou Wang cannot shatter a mountain peak—only Dou Zong level can achieve that"
+
+【suggestion MUST be specific】:
+- MUST give concrete revision content: not "adjust power level" but "change to 'Xiao Yan's full-force punch cracked the mountain surface, creating a three-foot deep fissure'"
+- MUST explain why: why this change solves the problem
+- MUST provide actionable steps: user can directly apply the fix after reading
+- Example: "Change paragraph 5, line 2 to 'Xiao Yan unleashed his full-force punch; the mountain surface cracked open with a three-foot deep fissure,碎石飞溅'. This showcases Xiao Yan's combat prowess while staying within Dou Wang's power range. If stronger destruction is needed, set up Xiao Yan using a secret technique or weapon earlier in the chapter"
 
 passed is false ONLY when critical-severity issues exist.
 
@@ -530,12 +570,24 @@ ${dimList}
 	      "severity": "critical|warning|info",
 	      "repair_scope": "local|structural|unknown",
 	      "category": "审查维度名称",
-	      "description": "具体问题描述",
-	      "suggestion": "修改建议"
+	      "description": "具体问题描述（必须包含：位置+原文内容+设定对比）",
+	      "suggestion": "具体修改方法（必须包含：改什么+改成什么+为什么这样改）"
 	    }
   ],
   "summary": "一句话总结审查结论"
 }
+
+【description 必须具体】：
+- 必须指出问题位置：第几段/第几行/哪个对话
+- 必须引用原文内容：直接摘录有问题的句子或段落
+- 必须对比设定：说明原文与哪个设定文件/设定内容冲突
+- 示例："第5段第2句'萧炎一拳轰碎了整座山峰'，但 story_bible.md 中设定萧炎当前等级为斗王，斗王不可能一拳轰碎山峰，需要斗宗级别才能做到"
+
+【suggestion 必须具体】：
+- 必须给出具体修改内容：不是"调整实力"而是"改为'萧炎全力一拳，山峰表面裂开一道缝隙'"
+- 必须解释修改原因：为什么这样改能解决问题
+- 必须给出可执行的修改步骤：用户看到建议后能直接动手修改
+- 示例："将第5段第2句改为'萧炎全力一拳轰出，山峰表面裂开一道三尺深的缝隙，碎石飞溅'。这样既展现了萧炎的战斗实力，又符合斗王级别的力量范围。如果需要更强的破坏效果，可以在前文铺垫萧炎使用了某种秘法或武器"
 
 只有当存在 critical 级别问题时，passed 才为 false。
 

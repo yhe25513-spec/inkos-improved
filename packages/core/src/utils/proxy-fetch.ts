@@ -3,6 +3,9 @@ import { ProxyAgent } from "undici";
 type ProxyEnv = Record<string, string | undefined>;
 type FetchInitWithDispatcher = RequestInit & { dispatcher?: unknown };
 
+// Default timeout for LLM requests (90 seconds to account for slow providers like Agnes)
+const DEFAULT_FETCH_TIMEOUT_MS = 90_000;
+
 export function resolveProxyUrl(explicitProxyUrl?: string, env: ProxyEnv = process.env): string | undefined {
   const candidate = [
     explicitProxyUrl,
@@ -40,5 +43,16 @@ export function fetchWithProxy(
   explicitProxyUrl?: string,
   env: ProxyEnv = process.env,
 ): ReturnType<typeof fetch> {
-  return fetch(input, buildProxyFetchInit(init, explicitProxyUrl, env));
+  const fetchInit = buildProxyFetchInit(init, explicitProxyUrl, env);
+
+  // Add timeout if not already set (for slow LLM providers like Agnes)
+  if (!fetchInit.signal) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), DEFAULT_FETCH_TIMEOUT_MS);
+    fetchInit.signal = controller.signal;
+    // Note: caller should handle AbortError appropriately
+    // The timeout will be cleared when the response stream is fully read
+  }
+
+  return fetch(input, fetchInit);
 }

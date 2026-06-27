@@ -7,4 +7,5 @@ export const initialMessageState: MessageState = {
   input: "",
   selectedModel: null,
   selectedService: null,
+  pendingRevisionChapter: null,
 };

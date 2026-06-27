@@ -53,9 +53,10 @@ function parseStoryBible(content: string): LegacySummary {
 
 interface SummarySectionProps {
   readonly bookId: string;
+  readonly defaultOpen?: boolean;
 }
 
-export function SummarySection({ bookId }: SummarySectionProps) {
+export function SummarySection({ bookId, defaultOpen = true }: SummarySectionProps) {
   // Phase 5 layout: structured frontmatter + prose, sourced from story_frame.md.
   const [frontmatter, setFrontmatter] = useState<TruthFrontmatter | null>(null);
   const [worldOverview, setWorldOverview] = useState("");
@@ -103,14 +104,14 @@ export function SummarySection({ bookId }: SummarySectionProps) {
     return (
       <>
         {legacy.world && (
-          <SidebarCard title="世界观">
+          <SidebarCard title="世界观" defaultOpen={defaultOpen}>
             <Streamdown className={SIDEBAR_MD_CLASS} plugins={streamdownPlugins}>
               {legacy.world}
             </Streamdown>
           </SidebarCard>
         )}
         {(legacy.protagonist || legacy.cast) && (
-          <SidebarCard title="角色">
+          <SidebarCard title="角色" defaultOpen={defaultOpen}>
             {legacy.protagonist && (
               <Streamdown className={SIDEBAR_MD_CLASS} plugins={streamdownPlugins}>
                 {legacy.protagonist}
@@ -143,13 +144,13 @@ export function SummarySection({ bookId }: SummarySectionProps) {
   return (
     <>
       {cards.length > 0 && (
-        <SidebarCard title="故事基石">
+        <SidebarCard title="故事基石" defaultOpen={defaultOpen}>
           <FrontmatterCards cards={cards} />
           {!worldOverview && openFull}
         </SidebarCard>
       )}
       {worldOverview && (
-        <SidebarCard title="世界观">
+        <SidebarCard title="世界观" defaultOpen={defaultOpen}>
           <Streamdown className={SIDEBAR_MD_CLASS} plugins={streamdownPlugins}>
             {worldOverview}
           </Streamdown>

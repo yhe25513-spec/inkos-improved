@@ -16,9 +16,10 @@ interface TruthFileInfo {
 
 interface FoundationSectionProps {
   readonly bookId: string;
+  readonly defaultOpen?: boolean;
 }
 
-export function FoundationSection({ bookId }: FoundationSectionProps) {
+export function FoundationSection({ bookId, defaultOpen = true }: FoundationSectionProps) {
   const [files, setFiles] = useState<ReadonlyArray<TruthFileInfo>>([]);
   const openArtifact = useChatStore((s) => s.openArtifact);
   const bookDataVersion = useChatStore((s) => s.bookDataVersion);
@@ -36,7 +37,7 @@ export function FoundationSection({ bookId }: FoundationSectionProps) {
   if (available.length === 0) return null;
 
   return (
-    <SidebarCard title="核心文件">
+    <SidebarCard title="核心文件" defaultOpen={defaultOpen}>
       <ul className="space-y-1">
         {available.map((item) => (
           <li key={item.name}>

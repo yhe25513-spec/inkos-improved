@@ -33,6 +33,8 @@ import { launchTui } from "./tui/app.js";
 import { quickCommand } from "./commands/quick.js";
 import { hooksCommand } from "./commands/hooks.js";
 import { healthCommand } from "./commands/health.js";
+import { charactersCommand } from "./commands/characters.js";
+import { startCommand } from "./commands/start.js";
 
 const require = createRequire(import.meta.url);
 const { version } = require("../package.json") as { version: string };
@@ -97,6 +99,8 @@ export function createProgram(hooks: ProgramHooks = {}): Command {
   program.addCommand(quickCommand);
   program.addCommand(hooksCommand);
   program.addCommand(healthCommand);
+  program.addCommand(charactersCommand);
+  program.addCommand(startCommand);
 
   return program;
 }

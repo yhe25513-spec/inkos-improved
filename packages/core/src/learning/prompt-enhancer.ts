@@ -68,10 +68,30 @@ export class PromptEnhancer {
     lines.push(`- 文学性: ${this.getLiteraryDesc(p.style.literaryLevel)}`);
     lines.push(`- 幽默感: ${this.getHumorDesc(p.style.humor)}`);
 
+    // 暗黑/浪漫/动作维度描述
+    if (p.style.darkness > 0.6) {
+      lines.push("- 氛围阴暗、情感沉重");
+    } else if (p.style.darkness < 0.3) {
+      lines.push("- 氛围明快、情感轻松");
+    }
+    if (p.style.romance > 0.6) {
+      lines.push("- 情感张力强、人物关系细腻");
+    }
+    if (p.style.action > 0.6) {
+      lines.push("- 节奏快、动作描写直接");
+    }
+
     lines.push("");
     lines.push("### 句式要求");
     lines.push(`- 平均句长: ${p.sentence.avgLength}字`);
     lines.push(`- 短句比例: ${(p.sentence.shortSentenceRatio * 100).toFixed(0)}%`);
+
+    // 段落长度维度描述
+    if (p.sentence.paragraphLength < 80) {
+      lines.push("- 多用短段落制造紧张感");
+    } else if (p.sentence.paragraphLength > 150) {
+      lines.push("- 段落可稍长，适合铺陈描写");
+    }
 
     if (p.vocabulary.preferredWords.length > 0) {
       lines.push("");

@@ -66,6 +66,31 @@ export interface TimelineEvent {
   type: "main" | "side" | "flashback";
 }
 
+/** 修复方案 */
+export interface FixProposal {
+  id: string;
+  name: string;
+  description: string;
+  actions: FixAction[];
+  priority: "P0" | "P1" | "P2";
+}
+
+/** 修复动作 */
+export interface FixAction {
+  type: "edit_file" | "update_setting" | "add_content";
+  targetFile: string;
+  oldValue?: string;
+  newValue: string;
+  description: string;
+}
+
+/** 一致性检查结果 */
+export interface ConsistencyCheckResult {
+  issues: ConsistencyIssue[];
+  proposals: FixProposal[];
+  summary: string;
+}
+
 /** 一致性问题 */
 export interface ConsistencyIssue {
   type: "foreshadow" | "character" | "timeline" | "detail";
@@ -73,6 +98,7 @@ export interface ConsistencyIssue {
   message: string;
   location: { chapter: number; element: string };
   suggestion: string;
+  relatedProposals?: string[];
 }
 
 /** 时间线冲突 */

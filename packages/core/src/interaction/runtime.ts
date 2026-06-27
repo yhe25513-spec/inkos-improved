@@ -12,7 +12,7 @@ import {
   updateAutomationMode,
 } from "./session.js";
 
-type ReviseMode = "local-fix" | "rewrite";
+type ReviseMode = "auto" | "rewrite";
 type RuntimeLanguage = "zh" | "en";
 
 export interface InteractionRuntimeTools {
@@ -645,7 +645,7 @@ export async function runInteractionRequest(params: {
           en: "Chapter number is required for chapter revision.",
         }));
       }
-      const mode: ReviseMode = request.intent === "rewrite_chapter" ? "rewrite" : "local-fix";
+      const mode: ReviseMode = request.intent === "rewrite_chapter" ? "rewrite" : "auto";
       const userInstruction = request.instruction ?? undefined;
       const toolResult = await params.tools.reviseDraft(bookId, request.chapterNumber, mode, userInstruction);
       const metadata = extractToolMetadata(toolResult);

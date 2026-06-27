@@ -22,6 +22,10 @@ import {
   Settings,
   Download,
   FileInput,
+  BookPlus,
+  ScrollText,
+  Gamepad2,
+  Feather,
 } from "lucide-react";
 
 interface BookSummary {
@@ -40,6 +44,7 @@ interface Nav {
   toAnalytics: (id: string) => void;
   toBookCreate: () => void;
   toServices: () => void;
+  toImport: (tab?: "chapters" | "canon" | "fanfic" | "spinoff" | "imitation") => void;
 }
 
 function BookMenu({ bookId, bookTitle, nav, t, onDelete, onOpenChange }: {
@@ -127,6 +132,34 @@ function BookMenu({ bookId, bookTitle, nav, t, onDelete, onOpenChange }: {
   );
 }
 
+// Creation Card Component for Dashboard
+function CreationCard({
+  icon,
+  label,
+  desc,
+  color,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  desc: string;
+  color: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="group flex flex-col items-center gap-2 p-4 rounded-xl border border-border/40 bg-card/60 hover:border-primary/30 hover:bg-primary/5 transition-all hover:scale-105 active:scale-95"
+    >
+      <div className={`p-2 rounded-lg ${color}`}>{icon}</div>
+      <div className="text-sm font-medium text-foreground group-hover:text-primary transition-colors">
+        {label}
+      </div>
+      <div className="text-xs text-muted-foreground text-center leading-4">{desc}</div>
+    </button>
+  );
+}
+
 export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: ReadonlyArray<SSEMessage> }; theme: Theme; t: TFunction }) {
   const c = useColors(theme);
   const [menuOpenBookId, setMenuOpenBookId] = useState<string | null>(null);
@@ -139,6 +172,18 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
 
   const logEvents = sse.messages.filter((m) => m.event === "log").slice(-8);
   const progressEvent = sse.messages.filter((m) => m.event === "llm:progress").slice(-1)[0];
+  const isZh = t("nav.connected") === "已连接";
+
+  // Helper function to launch different project modes (short story, play, etc.)
+  const launchProjectMode = (kind: "short" | "play", playMode?: "guided" | "open") => {
+    // In the Dashboard, we navigate to the appropriate creation page
+    if (kind === "short") {
+      nav.toBookCreate(); // For now, redirect to book create page
+    } else if (kind === "play") {
+      // For play mode, we could navigate to a specific play creation page
+      nav.toBookCreate(); // For now, redirect to book create page
+    }
+  };
 
   useEffect(() => {
     const recent = sse.messages.at(-1);
@@ -212,6 +257,38 @@ export function Dashboard({ nav, sse, theme, t }: { nav: Nav; sse: { messages: R
           <Plus size={16} />
           {t("nav.newBook")}
         </button>
+      </div>
+
+      {/* 4 creation mode cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <CreationCard
+          icon={<BookPlus size={20} />}
+          label={t("nav.createNovel")}
+          desc={isZh ? "世界观 → 卷纲 → 章节" : "World → Volume → Chapters"}
+          color="bg-primary/10 text-primary"
+          onClick={nav.toBookCreate}
+        />
+        <CreationCard
+          icon={<ScrollText size={20} />}
+          label={t("nav.createShort")}
+          desc={isZh ? "一句话灵感 → 完整正文" : "One idea → Full story"}
+          color="bg-amber-500/10 text-amber-600 dark:text-amber-400"
+          onClick={() => launchProjectMode("short")}
+        />
+        <CreationCard
+          icon={<Gamepad2 size={20} />}
+          label={t("nav.createFree")}
+          desc={isZh ? "自然语言创建可玩世界" : "Natural language playable world"}
+          color="bg-violet-500/10 text-violet-600 dark:text-violet-400"
+          onClick={() => launchProjectMode("play", "open")}
+        />
+        <CreationCard
+          icon={<Feather size={20} />}
+          label={t("nav.createFanfic")}
+          desc={isZh ? "导入已有文本继续创作" : "Import existing text to continue"}
+          color="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          onClick={() => nav.toImport("fanfic")}
+        />
       </div>
 
       <div className="grid gap-6">

@@ -242,16 +242,58 @@ export class EntityDB {
 
   // ==================== Delta Application ====================
 
+  /**
+   * 查找与新实体"撞名/撞别名"的已有实体。
+   * 匹配策略（任一命中即视为同一个实体）：
+   *  1. 名称完全一致
+   *  2. 新实体的别名包含某已有实体的名称
+   *  3. 已有实体的别名包含新实体的名称
+   *  4. 新实体与已有实体共享任意别名
+   */
+  findEntityByAliases(
+    entityName: string,
+    aliases: readonly string[],
+  ): Entity | null {
+    const rows = this.db.prepare(
+      "SELECT * FROM entities WHERE type = 'character'",
+    ).all() as Entity[];
+    for (const row of rows) {
+      const existing = this.rowToEntity(row);
+      // 名称完全一致
+      if (entityName && existing.name === entityName) return existing;
+      // 新实体的别名命中了已有实体的名称
+      if (aliases.some((a) => a && existing.name && a === existing.name)) {
+        return existing;
+      }
+      // 已有实体的别名命中了新实体的名称
+      if (existing.aliases.some((a) => a && entityName && a === entityName)) {
+        return existing;
+      }
+      // 别名之间互相命中
+      const overlap = existing.aliases.some((a) =>
+        aliases.some((b) => a && b && a === b),
+      );
+      if (overlap) return existing;
+    }
+    return null;
+  }
+
   applyDelta(delta: EntityDelta, chapter: number): void {
     // 更新实体
     for (const entity of [...delta.characters, ...delta.scenes, ...delta.organizations, ...delta.items, ...delta.concepts]) {
-      const existing = this.getEntity(entity.id);
+      // 先按主键精确匹配；若未命中再按名称/别名模糊匹配，
+      // 避免同一角色在不同章节被 extractor 生成不同 id 而造成重复。
+      let existing = this.getEntity(entity.id);
+      if (!existing) {
+        existing = this.findEntityByAliases(entity.name, entity.aliases ?? []);
+      }
+
       if (existing) {
         // 记录状态变化
         for (const [key, value] of Object.entries(entity.state)) {
           if (existing.state[key] !== value) {
             this.recordStateChange({
-              entityId: entity.id,
+              entityId: existing.id,
               chapter,
               field: key,
               oldValue: existing.state[key],
@@ -261,7 +303,16 @@ export class EntityDB {
           }
         }
 
-        // 更新现有实体
+        // 合并别名 / 属性，避免丢失 extractor 新增的标识信息
+        const mergedAliases = Array.from(
+          new Set([...(existing.aliases ?? []), ...(entity.aliases ?? [])]),
+        );
+        const mergedAttributes = {
+          ...(existing.attributes ?? {}),
+          ...(entity.attributes ?? {}),
+        };
+        existing.aliases = mergedAliases;
+        existing.attributes = mergedAttributes;
         existing.lastAppearance = chapter;
         Object.assign(existing.state, entity.state);
         this.upsertEntity(existing);

@@ -21,9 +21,13 @@ import { ChatMessage } from "../components/chat/ChatMessage";
 import { QuickActions } from "../components/chat/QuickActions";
 import { QuickCommands } from "../components/QuickCommands";
 import { ToolExecutionSteps, type ProposedActionDetails } from "../components/chat/ToolExecutionSteps";
-import { PlayHud } from "../components/chat/PlayHud";
+import {
+  PlayHud
+} from "../components/chat/PlayHud";
 import { PlayChoicePanel } from "../components/chat/PlayChoicePanel";
 import { latestPlayChoiceSet } from "../components/chat/play-choices";
+import { AgentPipelinePanel, usePipelineState } from "../components/chat/AgentPipelinePanel";
+import { RevisionPlanPanel } from "../components/chat/play-hud/RevisionPlanPanel";
 import {
   Loader2,
   BotMessageSquare,
@@ -93,7 +97,7 @@ interface CoverConfigResponse {
 
 // -- Component --
 
-export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-create", nav, theme, t, sse: _sse }: ChatPageProps) {
+export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-create", nav, theme, t, sse }: ChatPageProps) {
   // -- Store selectors --
   const messages = useChatStore(chatSelectors.activeMessages);
   const activeSession = useChatStore(chatSelectors.activeSession);
@@ -118,6 +122,7 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
   const autoScrollPinnedRef = useRef(true);
 
   const isZh = t("nav.connected") === "\u5DF2\u8FDE\u63A5";
+  const pipeline = usePipelineState(sse.messages, isZh);
   const hasBook = Boolean(activeBookId);
   const currentSessionKind: ChatSessionKind = activeSession?.sessionKind
     ?? (mode === "book-create" ? "book-create" : activeBookId ? "book" : "chat");
@@ -147,6 +152,45 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
   const [playImageSettings, setPlayImageSettings] = useState<PlayImageSettings>({ actors: false, moments: false, inventory: false });
   const [playImageCoverReady, setPlayImageCoverReady] = useState(false);
   const worldPanelInsetClass = currentSessionKind === "play" && worldPanelOpen ? "lg:pr-[380px]" : "";
+  
+  // 修订计划面板状态
+  const [showRevisionPanel, setShowRevisionPanel] = useState(false);
+  const [targetChapterForAudit, setTargetChapterForAudit] = useState<number | undefined>(undefined);
+  
+  const openRevisionPanel = (chapterNumber?: number) => {
+    if (chapterNumber) {
+      // 直接使用指定的章节号
+      setTargetChapterForAudit(chapterNumber);
+      setShowRevisionPanel(true);
+    } else if (activeBookId) {
+      // 自动获取最后一章的章节号
+      void (async () => {
+        try {
+          const chapters = await fetchJson<{ number: number }[]>(`/books/${encodeURIComponent(activeBookId)}/chapters`);
+          if (chapters && chapters.length > 0) {
+            const lastChapter = chapters.reduce((max, ch) => Math.max(max, ch.number), 0);
+            setTargetChapterForAudit(lastChapter);
+          }
+        } catch {
+          setTargetChapterForAudit(undefined);
+        } finally {
+          setShowRevisionPanel(true);
+        }
+      })();
+    } else {
+      setShowRevisionPanel(true);
+    }
+  };
+
+  // 监听 pendingRevisionChapter 状态，自动打开修订面板
+  const pendingRevisionChapter = useChatStore((s) => s.pendingRevisionChapter);
+  useEffect(() => {
+    if (pendingRevisionChapter !== null) {
+      openRevisionPanel(pendingRevisionChapter);
+      // 清除 pendingRevisionChapter 状态
+      useChatStore.setState({ pendingRevisionChapter: null });
+    }
+  }, [pendingRevisionChapter]);
 
   // Derived: is the assistant currently streaming/thinking/executing tools?
   const isStreaming = useMemo(() => {
@@ -612,12 +656,23 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
         )}
       </div>
 
+      {/* Agent Pipeline execution panel — shows when a pipeline is running */}
+      {pipeline && pipeline.stages.some((s) => s.status === "active" || s.status === "pending") && (
+        <div className={`shrink-0 transition-[padding] duration-200 ${worldPanelInsetClass}`}>
+          <div className="max-w-3xl mx-auto w-full px-4 mb-2">
+            <AgentPipelinePanel pipeline={pipeline} isZh={isZh} />
+          </div>
+        </div>
+      )}
+
       {/* Quick actions (only when a book is active) */}
       {hasBook && !showChoicePanel && (
         <div className={`shrink-0 transition-[padding] duration-200 ${worldPanelInsetClass}`}>
           <div className="max-w-3xl mx-auto w-full px-4">
             <QuickActions
               onAction={handleQuickAction}
+              onAudit={openRevisionPanel}
+              onRevise={openRevisionPanel}
               disabled={loading || !activeSessionId}
               isZh={isZh}
             />
@@ -781,6 +836,20 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
           imageSettings={playImageSettings}
           sessionTitle={activeSession?.title ?? null}
         />
+      )}
+      
+      {/* 修订计划面板模态框 */}
+      {showRevisionPanel && activeBookId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-2xl h-[80vh] mx-4">
+            <RevisionPlanPanel
+              bookId={activeBookId}
+              defaultChapterNumber={targetChapterForAudit ?? 1}
+              isZh={isZh}
+              onClose={() => setShowRevisionPanel(false)}
+            />
+          </div>
+        </div>
       )}
     </div>
   );

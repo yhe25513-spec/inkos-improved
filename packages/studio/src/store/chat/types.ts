@@ -147,6 +147,7 @@ export interface MessageState {
   input: string;
   selectedModel: string | null;
   selectedService: string | null;
+  pendingRevisionChapter: number | null;
 }
 
 export interface CreateState {

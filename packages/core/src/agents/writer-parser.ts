@@ -101,7 +101,11 @@ function fallbackExtractTitle(
   // Try: # 第N章 Title
   const headingMatch = raw.match(/^#\s*第\d+章\s*(.+)/m);
   if (headingMatch) {
-    return headingMatch[1]!.trim();
+    const candidate = headingMatch[1]!.trim();
+    // Guard: title must not contain sentence-level punctuation or be too long (likely body text mistaken for title)
+    if (candidate.length <= 20 && !/[，。！？；,!?;]/.test(candidate)) {
+      return candidate;
+    }
   }
   if (countingMode === "en_words") {
     const englishHeadingMatch = raw.match(/^#\s*Chapter\s+\d+(?::|\s+)\s*(.+)/im);

@@ -1,3 +1,5 @@
+import type { HooksState, HookRecord } from "../models/runtime-state.js";
+
 /**
  * Phase 9-3: hard gate that a chapter draft actually acts on the hook ledger
  * the planner declared in the memo's "## 本章 hook 账" / "## Hook ledger for
@@ -12,6 +14,11 @@
  * at least one keyword from the ledger line's descriptor (hook name, key
  * noun, etc.). We deliberately do NOT require the draft to repeat the raw
  * hook_id like "H007" — writers don't embed IDs in prose.
+ *
+ * Phase 8 (v1.1 upgrade): Added Chekhov's Gun callback detection.
+ * If a hook has seedText (original prose fragment) and the current chapter
+ * is far enough from startChapter, we check if the draft contains a natural
+ * callback to the seedText's core nouns.
  */
 
 export interface HookLedgerViolation {
@@ -123,6 +130,10 @@ export function parseHookLedger(memoBody: string): HookLedger {
 export function validateHookLedger(
   memoBody: string,
   draftContent: string,
+  /** Phase 8: Optional hooks state for Chekhov's Gun callback detection. */
+  hooksState?: HooksState,
+  /** Phase 8: Current chapter number for callback distance check. */
+  currentChapter?: number,
 ): ReadonlyArray<HookLedgerViolation> {
   const ledger = parseHookLedger(memoBody);
   const violations: HookLedgerViolation[] = [];
@@ -137,6 +148,30 @@ export function validateHookLedger(
         description: `memo 在 advance/resolve 里声明要处理 ${entry.id}，但确定性关键词检查没有找到对应落点`,
         suggestion: `复核正文是否已经用动作、对话、物件或信息变化推进了 ${entry.id}；若没有，请补具体场景，若已推进，可忽略这条确定性提示`,
       });
+    }
+  }
+
+  // Phase 8: Chekhov's Gun callback detection.
+  // If a hook has seedText and the chapter is ≥3 chapters after startChapter,
+  // check if the draft contains any echo of the seedText's core nouns.
+  if (hooksState && currentChapter !== undefined) {
+    for (const hook of hooksState.hooks) {
+      // Only check hooks that have seedText and are not yet resolved.
+      if (!hook.seedText || hook.status === "resolved") continue;
+      // Only check if the hook has been "sleeping" for ≥3 chapters.
+      const distance = currentChapter - hook.startChapter;
+      if (distance < 3) continue;
+      // Check if the draft contains any noun from seedText.
+      const seedNouns = extractCoreNouns(hook.seedText);
+      const hasCallback = seedNouns.some((noun) => draftContent.includes(noun));
+      if (!hasCallback) {
+        violations.push({
+          severity: "warning",
+          category: "伏笔沉睡未唤起",
+          description: `Hook ${hook.hookId}（seedText="${hook.seedText.slice(0, 40)}…"）在第 ${hook.startChapter} 章埋下，距今 ${distance} 章，正文里没有任何对 seedText 核心名词的唤起。读者可能已经忘记这个伏笔。`,
+          suggestion: `在正文某处加入一个自然的回环句——主角想起/看到/提到 seedText 里的核心物件或细节。示例：seedText="胖虎把皱巴巴的借条拍在桌上" → 正文可写"他的指尖在桌面上无意识地画了几圈——那桌板上还留着胖虎拍借条时的凹痕"。`,
+        });
+      }
     }
   }
 
@@ -157,6 +192,18 @@ export function validateHookLedger(
   }
 
   return violations;
+}
+
+/**
+ * Extract core nouns from a seedText for callback detection.
+ * Simple heuristic: extract 2+ char CJK sequences and 3+ letter ASCII words.
+ */
+function extractCoreNouns(seedText: string): string[] {
+  // Extract CJK nouns (2+ consecutive CJK chars)
+  const cjkMatches = seedText.match(/[\u4e00-\u9fa5]{2,8}/g) ?? [];
+  // Extract ASCII words (3+ letters)
+  const asciiMatches = seedText.match(/[A-Za-z]{3,}/g) ?? [];
+  return [...cjkMatches, ...asciiMatches];
 }
 
 function extractLedgerSection(memoBody: string): string | undefined {

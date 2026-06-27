@@ -1,0 +1,1711 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InkOS Studio — UI Redesign Proposal</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --background: oklch(0.985 0.005 80);
+  --foreground: oklch(0.13 0.02 60);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.15 0.015 60);
+  --primary: oklch(0.45 0.12 25);
+  --primary-foreground: oklch(0.98 0.006 76);
+  --secondary: oklch(0.94 0.01 76);
+  --muted: oklch(0.94 0.008 76);
+  --muted-foreground: oklch(0.38 0.02 60);
+  --border: oklch(0.84 0.01 76);
+  --accent: oklch(0.92 0.02 85);
+  --font-serif: 'Instrument Serif', Georgia, serif;
+  --font-sans: 'DM Sans', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --radius: 0.6rem;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--background);
+  color: var(--foreground);
+  line-height: 1.6;
+  padding: 2rem;
+}
+
+h1, h2, h3, h4 { font-family: var(--font-serif); letter-spacing: -0.02em; font-weight: 500; }
+
+/* ===== Analysis Report Layout ===== */
+.report {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.report-header {
+  text-align: center;
+  padding: 3rem 0 2rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3rem;
+}
+
+.report-header h1 {
+  font-size: 2.5rem;
+  font-style: italic;
+  color: var(--primary);
+  margin-bottom: 0.5rem;
+}
+
+.report-header .subtitle {
+  font-size: 1rem;
+  color: var(--muted-foreground);
+}
+
+/* ===== Section ===== */
+.section {
+  margin-bottom: 3rem;
+}
+
+.section h2 {
+  font-size: 1.5rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid var(--primary);
+  display: inline-block;
+}
+
+.section h3 {
+  font-size: 1.15rem;
+  margin: 1.5rem 0 0.75rem;
+  color: var(--primary);
+}
+
+/* ===== Problem Cards ===== */
+.problem-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.problem-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  position: relative;
+  transition: box-shadow 0.2s;
+}
+
+.problem-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+
+.problem-card .severity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-bottom: 0.75rem;
+}
+
+.severity.critical { background: #ffcccc; color: #cc0000; }
+.severity.warning { background: #fff3cd; color: #856404; }
+.severity.enhancement { background: #cce5ff; color: #004085; }
+
+.problem-card h4 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
+.problem-card p {
+  font-size: 0.875rem;
+  color: var(--muted-foreground);
+  line-height: 1.6;
+}
+
+.problem-card .location {
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  opacity: 0.7;
+}
+
+/* ===== Mockup Container ===== */
+.mockup-frame {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--card);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.06);
+  margin: 2rem 0;
+}
+
+.mockup-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+.mockup-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.mockup-dot.red { background: #ff5f57; }
+.mockup-dot.yellow { background: #ffbd2e; }
+.mockup-dot.green { background: #28ca41; }
+
+.mockup-titlebar span {
+  margin-left: 8px;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+}
+
+.mockup-body {
+  display: flex;
+  min-height: 500px;
+}
+
+/* ===== Sidebar Mockup ===== */
+.mockup-sidebar {
+  width: 220px;
+  min-width: 220px;
+  border-right: 1px solid var(--border);
+  background: var(--background);
+  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mockup-logo {
+  padding: 0 16px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mockup-logo .logo-icon {
+  width: 32px;
+  height: 32px;
+  background: var(--primary);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mockup-logo .logo-text {
+  font-family: var(--font-serif);
+  font-style: italic;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.mockup-logo .logo-sub {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--muted-foreground);
+  font-weight: 700;
+}
+
+.mockup-nav-section {
+  padding: 0 12px;
+  margin-bottom: 16px;
+}
+
+.mockup-nav-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted-foreground);
+  font-weight: 700;
+  padding: 0 4px;
+  margin-bottom: 6px;
+}
+
+.mockup-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  cursor: default;
+  transition: background 0.15s;
+}
+
+.mockup-nav-item:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.mockup-nav-item.active {
+  background: var(--secondary);
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.mockup-nav-item .icon {
+  width: 16px;
+  text-align: center;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+
+.mockup-nav-item.active .icon {
+  color: var(--primary);
+  opacity: 1;
+}
+
+/* ===== New Compact Sidebar ===== */
+.mockup-sidebar-new {
+  width: 64px;
+  min-width: 64px;
+  border-right: 1px solid var(--border);
+  background: var(--background);
+  padding: 12px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.mockup-sidebar-new .nav-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  color: var(--muted-foreground);
+  cursor: default;
+  transition: all 0.15s;
+  position: relative;
+}
+
+.mockup-sidebar-new .nav-icon:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.mockup-sidebar-new .nav-icon.active {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.mockup-sidebar-new .nav-icon .tooltip {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 0.65rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.mockup-sidebar-new .nav-icon:hover .tooltip {
+  opacity: 1;
+}
+
+.mockup-sidebar-new .nav-divider {
+  width: 28px;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ===== Main Content Mockup ===== */
+.mockup-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}
+
+.mockup-header {
+  height: 48px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(8px);
+}
+
+.mockup-header .breadcrumb {
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mockup-header .breadcrumb .sep {
+  opacity: 0.4;
+}
+
+.mockup-header .actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mockup-header .action-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  cursor: default;
+}
+
+.mockup-header .action-btn:hover {
+  background: var(--secondary);
+}
+
+.mockup-header .action-btn.primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+.mockup-scroll-area {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+/* ===== Dashboard Mockup ===== */
+.dashboard-hero {
+  text-align: center;
+  padding: 3rem 0;
+}
+
+.dashboard-hero .hero-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  border: 2px dashed var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1rem;
+  font-size: 1.5rem;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+}
+
+.dashboard-hero h2 {
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.dashboard-hero p {
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  max-width: 300px;
+  margin: 0 auto 1.5rem;
+}
+
+.btn-new-book {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: none;
+  cursor: default;
+  box-shadow: 0 4px 12px rgba(69,30,25,0.2);
+}
+
+.book-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 2rem;
+}
+
+.book-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: box-shadow 0.2s;
+}
+
+.book-card:hover {
+  box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+}
+
+.book-card-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.book-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--primary);
+  opacity: 0.1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+  font-size: 1.1rem;
+}
+
+.book-card-title {
+  font-family: var(--font-serif);
+  font-size: 1.15rem;
+  font-style: italic;
+}
+
+.book-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.book-card-tag {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  font-weight: 600;
+}
+
+.book-card-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.book-card-status .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.book-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.book-card-btn {
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  cursor: default;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.book-card-btn.write {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+/* ===== Chat Mockup ===== */
+.chat-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.chat-messages {
+  flex: 1;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.chat-msg {
+  display: flex;
+  gap: 10px;
+  max-width: 80%;
+}
+
+.chat-msg.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+
+.chat-msg .avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.chat-msg.user .avatar {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.chat-msg.assistant .avatar {
+  background: var(--secondary);
+  color: var(--muted-foreground);
+}
+
+.chat-msg .bubble {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.chat-msg.user .bubble {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-bottom-right-radius: 4px;
+}
+
+.chat-msg.assistant .bubble {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+
+.chat-input-area {
+  border-top: 1px solid var(--border);
+  padding: 12px 20px;
+  background: rgba(255,255,255,0.6);
+  backdrop-filter: blur(8px);
+}
+
+.chat-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.chat-textarea {
+  flex: 1;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 0.82rem;
+  font-family: var(--font-sans);
+  resize: none;
+  min-height: 40px;
+  max-height: 120px;
+  background: var(--card);
+  outline: none;
+  line-height: 1.5;
+}
+
+.chat-textarea:focus {
+  border-color: var(--primary);
+}
+
+.chat-send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  cursor: default;
+  flex-shrink: 0;
+}
+
+.chat-model-picker {
+  max-width: 700px;
+  margin: 8px auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chat-model-label {
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+}
+
+.chat-quick-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.quick-action-chip {
+  padding: 3px 10px;
+  border-radius: 6px;
+  font-size: 0.68rem;
+  background: var(--secondary);
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+  cursor: default;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ===== Comparison Table ===== */
+.comparison-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+  margin: 1rem 0;
+}
+
+.comparison-table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--secondary);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+  border-bottom: 2px solid var(--border);
+}
+
+.comparison-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.comparison-table tr:last-child td {
+  border-bottom: none;
+}
+
+.comparison-table .current {
+  color: var(--muted-foreground);
+}
+
+.comparison-table .proposed {
+  color: var(--primary);
+  font-weight: 500;
+}
+
+/* ===== Two-column comparison ===== */
+.compare-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.compare-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.compare-panel-header {
+  padding: 10px 16px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.compare-panel-header.before {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.compare-panel-header.after {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.compare-panel-body {
+  padding: 16px;
+  font-size: 0.82rem;
+  line-height: 1.7;
+  background: var(--card);
+}
+
+.compare-panel-body ul {
+  list-style: none;
+  padding: 0;
+}
+
+.compare-panel-body li {
+  padding: 3px 0;
+  padding-left: 16px;
+  position: relative;
+}
+
+.compare-panel-body li::before {
+  position: absolute;
+  left: 0;
+}
+
+.compare-panel-body.before-panel li::before {
+  content: "⚠";
+  font-size: 0.7rem;
+}
+
+.compare-panel-body.after-panel li::before {
+  content: "✓";
+  font-size: 0.75rem;
+  color: #22c55e;
+}
+
+/* ===== Suggestion List ===== */
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.suggestion-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  position: relative;
+}
+
+.suggestion-card .number {
+  position: absolute;
+  top: -10px;
+  left: 16px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 999px;
+}
+
+.suggestion-card h4 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
+.suggestion-card p {
+  font-size: 0.85rem;
+  color: var(--muted-foreground);
+  line-height: 1.7;
+}
+
+/* ===== New Chat Input Mockup ===== */
+.new-input-area {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
+.new-input-container {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  overflow: hidden;
+}
+
+.new-input-top {
+  display: flex;
+  align-items: flex-end;
+  padding: 12px 14px;
+  gap: 8px;
+}
+
+.new-input-top textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 0.85rem;
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  background: transparent;
+  min-height: 24px;
+  max-height: 150px;
+}
+
+.new-send-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: white;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  cursor: default;
+  flex-shrink: 0;
+}
+
+.new-input-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.new-model-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  color: var(--muted-foreground);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--secondary);
+  cursor: default;
+}
+
+.new-model-badge .chevron {
+  font-size: 0.6rem;
+}
+
+.new-helpers {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.helper-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: default;
+  border: none;
+}
+
+.helper-btn:hover {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+/* ===== New Dashboard Hero ===== */
+.new-dashboard-hero {
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.new-create-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  max-width: 700px;
+  margin: 1.5rem auto 0;
+}
+
+.create-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 12px;
+  text-align: center;
+  cursor: default;
+  transition: all 0.2s;
+}
+
+.create-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 4px 12px rgba(69,30,25,0.08);
+  transform: translateY(-2px);
+}
+
+.create-card .card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  margin: 0 auto 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+}
+
+.create-card .card-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.create-card .card-desc {
+  font-size: 0.65rem;
+  color: var(--muted-foreground);
+  margin-top: 2px;
+}
+
+/* ===== New Book Card ===== */
+.new-book-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  transition: all 0.2s;
+}
+
+.new-book-card:hover {
+  border-color: var(--primary);
+  box-shadow: 0 4px 16px rgba(69,30,25,0.08);
+}
+
+.new-book-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.new-book-cover {
+  width: 44px;
+  height: 58px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, var(--primary) 0%, oklch(0.65 0.15 25) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 1.2rem;
+  box-shadow: 2px 2px 8px rgba(69,30,25,0.15);
+}
+
+.new-book-info {
+  flex: 1;
+}
+
+.new-book-title {
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+  font-style: italic;
+}
+
+.new-book-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.new-book-progress {
+  width: 80px;
+  height: 4px;
+  background: var(--secondary);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.new-book-progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 2px;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 900px) {
+  .compare-grid { grid-template-columns: 1fr; }
+  .problem-grid { grid-template-columns: 1fr; }
+  .mockup-sidebar { width: 180px; min-width: 180px; }
+  .new-create-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* ===== TUI Mockup ===== */
+.tui-mockup {
+  background: oklch(0.12 0.01 250);
+  color: #f0e6d8;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 20px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  line-height: 1.7;
+  margin: 1rem 0;
+}
+
+.tui-header {
+  color: #8f8374;
+}
+
+.tui-accent {
+  color: #c88a56;
+}
+
+.tui-border {
+  color: #6b6156;
+}
+
+.tui-user {
+  color: #a8c4d4;
+}
+
+.tui-system {
+  color: #b8a8d0;
+}
+
+.tui-cursor {
+  color: #c88a56;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.tui-composer-box {
+  border: 1px solid #6b6156;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-top: 8px;
+}
+
+</style>
+</head>
+<body>
+
+<div class="report">
+
+<!-- ===== Header ===== -->
+<div class="report-header">
+  <h1>InkOS Studio UI 设计改进方案</h1>
+  <p class="subtitle">基于现有架构的深度分析与渐进式重构建议 — 2026年6月</p>
+</div>
+
+<!-- ===== Part 1: 现状诊断 ===== -->
+<div class="section">
+  <h2>一、现状诊断 — 当前 UI 的问题</h2>
+
+  <h3>1.1 侧边栏：信息过载，导航效率低</h3>
+  <div class="problem-grid">
+    <div class="problem-card">
+      <span class="severity critical">严重</span>
+      <h4>260px 宽侧边栏塞入了 5 个区域、8 个创作入口 + 书籍列表 + 会话历史 + 系统设置</h4>
+      <p>侧边栏同时承担了「全局导航」「书籍管理」「会话管理」「系统设置」四个角色。用户每次打开都要面对密密麻麻的列表，找到想要的功能需要扫视大量信息。</p>
+      <div class="location">Sidebar.tsx:269–587</div>
+    </div>
+    <div class="problem-card">
+      <span class="severity critical">严重</span>
+      <h4>创作入口 8 个按钮平铺在侧边栏顶部，占据大量空间</h4>
+      <p>"创长篇小说、短篇、同人、番外、仿写、续写、分支互动、自由互动" 8 个按钮以 2×4 网格挤在侧边栏前 1/4 区域。大部分用户只用其中 2-3 个，其余 5-6 个成为视觉噪音。</p>
+      <div class="location">Sidebar.tsx:294–303</div>
+    </div>
+    <div class="problem-card">
+      <span class="severity warning">中等</span>
+      <h4>书籍列表 + 会话列表嵌套过深</h4>
+      <p>侧边栏需要展开书籍 → 展开会话 → 操作会话（改名/删除），三级嵌套。用户想切换到另一个会话需要 3 次点击：展开书 → 找到会话 → 点击更多菜单。</p>
+      <div class="location">Sidebar.tsx:310–408</div>
+    </div>
+    <div class="problem-card">
+      <span class="severity enhancement">优化</span>
+      <h4>侧边栏在书籍模式下与右侧 BookSidebar 功能重复</h4>
+      <p>左侧 Sidebar 有"我的书架"，右侧 BookSidebar 又有"进度/章节/角色/设定/摘要"。两个面板都在展示书籍信息，用户容易困惑哪个才是正确的操作入口。</p>
+      <div class="location">Sidebar.tsx vs BookSidebar.tsx</div>
+    </div>
+  </div>
+
+  <h3>1.2 聊天界面：输入区过于拥挤</h3>
+  <div class="problem-grid">
+    <div class="problem-card">
+      <span class="severity critical">严重</span>
+      <h4>模型选择器 + 快捷操作 + 配图按钮全部堆在输入框下方</h4>
+      <p>ChatPage.tsx 的输入区底部同时展示了模型下拉选择器（含搜索框）、"查看世界"按钮、自动配图按钮。三者在同一行争夺空间，在小屏幕上严重拥挤。</p>
+      <div class="location">ChatPage.tsx:678–716</div>
+    </div>
+    <div class="problem-card">
+      <span class="severity warning">中等</span>
+      <h4>QuickActions 快捷操作条与输入区耦合</h4>
+      <p>"写下一章、审计、导出、市场雷达" 四个快捷操作按钮作为独立条放在输入区上方，占据了本可用于消息显示的垂直空间。对于主要使用自由输入的用户来说，这些按钮几乎从不使用。</p>
+      <div class="location">ChatPage.tsx:616–626, QuickActions.tsx</div>
+    </div>
+    <div class="problem-card">
+      <span class="severity enhancement">优化</span>
+      <h4>Play 模式的配图设置在浮动菜单中，不易发现</h4>
+      <p>自动配图功能藏在一个 Palette 图标按钮的弹出菜单里，需要 2 次点击才能打开，且菜单没有明确的视觉引导。很多用户不知道这个功能的存在。</p>
+      <div class="location">ChatPage.tsx:718–762</div>
+    </div>
+  </div>
+
+  <h3>1.3 仪表盘：缺少层次感</h3>
+  <div class="problem-grid">
+    <div class="problem-card">
+      <span class="severity warning">中等</span>
+      <h4>Dashboard 页面没有明确的视觉层次</h4>
+      <p>书籍卡片、Manuscript Foundry 面板、配置提醒全部在同一层级并列展示。用户进入后第一眼不知道该看哪里。没有"最近活跃"与"全部书籍"的区分。</p>
+      <div class="location">Dashboard.tsx:187–379</div>
+    </div>
+    <div class="problem-card">
+      <span class="severity enhancement">优化</span>
+      <h4>书籍卡片的操作按钮位置不够直观</h4>
+      <p>每张书籍卡片右侧的"写下一章"按钮虽然醒目，但当书籍数量多时，右侧操作区会与左侧内容产生视觉割裂。且"统计分析"图标按钮太小，容易被忽略。</p>
+      <div class="location">Dashboard.tsx:275–315</div>
+    </div>
+  </div>
+
+  <h3>1.4 TUI 终端界面</h3>
+  <div class="problem-grid">
+    <div class="problem-card">
+      <span class="severity enhancement">优化</span>
+      <h4>TUI 的配色方案温暖但对比度不足</h4>
+      <p>终端主题使用暖色调 (#c88a56 强调色)，在大多数终端中对比度偏低，长时间阅读容易疲劳。消息类型的视觉区分（用户/助手/系统）仅靠颜色差异，色弱用户难以分辨。</p>
+      <div class="location">theme.ts</div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Part 2: 设计方案 ===== -->
+<div class="section">
+  <h2>二、设计方案 — 渐进式重构</h2>
+
+  <p style="color:var(--muted-foreground); font-size:0.9rem; margin-bottom:1.5rem;">
+    核心思路：<strong>减少侧边栏的信息密度，将全局导航收缩为图标栏，将创作入口提升为仪表盘的一等入口，将输入区简化为单一焦点。</strong>
+  </p>
+
+  <!-- 2.1 新的侧边栏 -->
+  <h3>2.1 新侧边栏：从"信息面板"到"导航轨道"</h3>
+
+  <div class="compare-grid">
+    <div class="compare-panel">
+      <div class="compare-panel-header before">当前</div>
+      <div class="compare-panel-body before-panel">
+        <ul>
+          <li>260px 宽，占据屏幕约 20%</li>
+          <li>Logo + 8 个创作按钮 (2×4 grid)</li>
+          <li>可折叠的书籍列表（含会话子项）</li>
+          <li>可折叠的会话历史</li>
+          <li>系统设置（4 个按钮）</li>
+          <li>工具（4 个按钮）</li>
+          <li>底部 Agent 状态</li>
+          <li>总计：约 30+ 个可点击元素</li>
+        </ul>
+      </div>
+    </div>
+    <div class="compare-panel">
+      <div class="compare-panel-header after">新设计</div>
+      <div class="compare-panel-body after-panel">
+        <ul>
+          <li>64px 窄图标栏，占屏幕 ~5%</li>
+          <li>Logo + 7 个图标按钮（悬停显示 tooltip）</li>
+          <li>书籍列表移至仪表盘内</li>
+          <li>会话历史移至 Chat 页顶部</li>
+          <li>设置/工具移至右上角菜单</li>
+          <li>底部无常驻元素（按需查看）</li>
+          <li>总计：7 个常驻可点击元素</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- 新侧边栏 Mockup -->
+  <div class="mockup-frame">
+    <div class="mockup-titlebar">
+      <span class="mockup-dot red"></span>
+      <span class="mockup-dot yellow"></span>
+      <span class="mockup-dot green"></span>
+      <span>新侧边栏 — 64px 图标导航轨</span>
+    </div>
+    <div class="mockup-body" style="height: 380px;">
+      <div class="mockup-sidebar-new">
+        <div class="mockup-logo" style="padding: 0 0 16px;">
+          <div class="logo-icon" style="width:36px;height:36px;border-radius:10px;font-size:16px;">I</div>
+        </div>
+
+        <div class="nav-divider"></div>
+
+        <div class="nav-icon active" title="仪表盘">
+          <span>⌂</span>
+          <span class="tooltip">仪表盘</span>
+        </div>
+        <div class="nav-icon" title="创作">
+          <span>✦</span>
+          <span class="tooltip">创作</span>
+        </div>
+        <div class="nav-icon" title="聊天">
+          <span>💬</span>
+          <span class="tooltip">聊天</span>
+        </div>
+        <div class="nav-icon" title="开放世界">
+          <span>🎮</span>
+          <span class="tooltip">Play</span>
+        </div>
+
+        <div class="nav-divider"></div>
+
+        <div class="nav-icon" title="分析">
+          <span>📊</span>
+          <span class="tooltip">分析</span>
+        </div>
+        <div class="nav-icon" title="模型配置">
+          <span>⚙</span>
+          <span class="tooltip">配置</span>
+        </div>
+        <div class="nav-icon" title="风格">
+          <span>✧</span>
+          <span class="tooltip">风格</span>
+        </div>
+
+        <div style="flex:1"></div>
+
+        <div class="nav-icon" title="设置">
+          <span>⚙</span>
+          <span class="tooltip">设置</span>
+        </div>
+      </div>
+
+      <div class="mockup-content">
+        <div class="mockup-header">
+          <div class="breadcrumb">
+            <span>首页</span>
+            <span class="sep">/</span>
+            <span style="color:var(--foreground);font-weight:500;">仪表盘</span>
+          </div>
+          <div class="actions">
+            <div class="action-btn">🌙</div>
+            <div class="action-btn">中/EN</div>
+          </div>
+        </div>
+        <div class="mockup-scroll-area">
+          <!-- New Dashboard -->
+          <div class="new-dashboard-hero">
+            <h2 style="font-size:1.8rem;margin-bottom:0.25rem;">工作台</h2>
+            <p style="color:var(--muted-foreground);font-size:0.85rem;">继续你的创作，或开始一个新的故事</p>
+
+            <div class="new-create-grid">
+              <div class="create-card">
+                <div class="card-icon" style="background:oklch(0.45 0.12 25/0.1);color:oklch(0.45 0.12 25);">📖</div>
+                <div class="card-label">长篇小说</div>
+                <div class="card-desc">世界观 → 卷纲 → 章节</div>
+              </div>
+              <div class="create-card">
+                <div class="card-icon" style="background:oklch(0.78 0.14 85/0.15);color:oklch(0.78 0.14 85);">📜</div>
+                <div class="card-label">短篇小说</div>
+                <div class="card-desc">一句话灵感 → 完整正文</div>
+              </div>
+              <div class="create-card">
+                <div class="card-icon" style="background:oklch(0.6 0.15 300/0.12);color:oklch(0.6 0.15 300);">🎮</div>
+                <div class="card-label">开放世界</div>
+                <div class="card-desc">自然语言创建可玩世界</div>
+              </div>
+              <div class="create-card">
+                <div class="card-icon" style="background:oklch(0.8 0.12 160/0.12);color:oklch(0.8 0.12 160);">🪶</div>
+                <div class="card-label">同人/仿写</div>
+                <div class="card-desc">导入已有文本继续创作</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="max-width:700px;margin:1.5rem auto 0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <h3 style="font-size:1rem;">我的书籍</h3>
+              <span style="font-size:0.7rem;color:var(--muted-foreground);">4 部作品</span>
+            </div>
+
+            <div class="new-book-card">
+              <div class="new-book-left">
+                <div class="new-book-cover">📖</div>
+                <div class="new-book-info">
+                  <div class="new-book-title">修真世界之万界仙途</div>
+                  <div class="new-book-meta">
+                    <span class="book-card-tag">玄幻</span>
+                    <span class="book-card-status"><span class="dot"></span> 写作中</span>
+                    <span style="font-size:0.7rem;color:var(--muted-foreground);">第 23/60 章</span>
+                    <div class="new-book-progress"><div class="new-book-progress-fill" style="width:38%;"></div></div>
+                  </div>
+                </div>
+              </div>
+              <div class="book-card-actions">
+                <div class="book-card-btn write">▶ 写下一章</div>
+                <div class="book-card-btn">📊</div>
+              </div>
+            </div>
+
+            <div class="new-book-card">
+              <div class="new-book-left">
+                <div class="new-book-cover" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);">📜</div>
+                <div class="new-book-info">
+                  <div class="new-book-title">雨夜便利店</div>
+                  <div class="new-book-meta">
+                    <span class="book-card-tag">悬疑</span>
+                    <span class="book-card-status"><span class="dot" style="background:#f59e0b;"></span> 审稿中</span>
+                    <span style="font-size:0.7rem;color:var(--muted-foreground);">已完成</span>
+                  </div>
+                </div>
+              </div>
+              <div class="book-card-actions">
+                <div class="book-card-btn">👁 阅读</div>
+                <div class="book-card-btn">📊</div>
+              </div>
+            </div>
+
+            <div class="new-book-card">
+              <div class="new-book-left">
+                <div class="new-book-cover" style="background:linear-gradient(135deg,#10b981,#059669);">🎮</div>
+                <div class="new-book-info">
+                  <div class="new-book-title">蒸汽城：齿轮与玫瑰</div>
+                  <div class="new-book-meta">
+                    <span class="book-card-tag">蒸汽朋克</span>
+                    <span class="book-card-status"><span class="dot" style="background:#8b5cf6;"></span> 互动中</span>
+                    <span style="font-size:0.7rem;color:var(--muted-foreground);">第 3 幕</span>
+                  </div>
+                </div>
+              </div>
+              <div class="book-card-actions">
+                <div class="book-card-btn" style="background:oklch(0.6 0.15 300/0.1);color:oklch(0.6 0.15 300);border-color:oklch(0.6 0.15 300/0.2);">🎮 游玩</div>
+                <div class="book-card-btn">📊</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2.2 新仪表盘 -->
+  <h3>2.2 新仪表盘：创作入口前置 + 书籍卡片增强</h3>
+
+  <div class="suggestions">
+    <div class="suggestion-card">
+      <span class="number">设计要点</span>
+      <h4>四大创作入口取代 8 个平铺按钮</h4>
+      <p>将 8 个创作入口浓缩为 4 个卡片："长篇小说"、"短篇小说"、"开放世界"、"同人/仿写"。每个卡片显示简短描述，帮助用户快速决策。不常用的"番外"、"续写"等合并到"更多"中。</p>
+    </div>
+    <div class="suggestion-card">
+      <span class="number">设计要点</span>
+      <h4>书籍卡片增加封面、进度条、状态标签</h4>
+      <p>每本书显示一个彩色封面占位符（根据类型着色）、章节进度条、当前状态标签。操作按钮从"写下一章"改为带状态的差异化按钮：写作中的书显示"继续"，审稿中的显示"审阅"。</p>
+    </div>
+    <div class="suggestion-card">
+      <span class="number">设计要点</span>
+      <h4>Manuscript Foundry 面板下沉</h4>
+      <p>实时写作追踪面板只在有书籍正在写作时出现，且放在书籍列表下方作为"活动面板"而非并列展示。不写作时完全隐藏，减少视觉噪音。</p>
+    </div>
+  </div>
+
+  <!-- 2.3 新聊天输入区 -->
+  <h3>2.3 新聊天输入区：单一焦点，辅助功能按需浮现</h3>
+
+  <div class="mockup-frame">
+    <div class="mockup-titlebar">
+      <span class="mockup-dot red"></span>
+      <span class="mockup-dot yellow"></span>
+      <span class="mockup-dot green"></span>
+      <span>新输入区设计 — 简洁 + 智能浮现</span>
+    </div>
+    <div class="mockup-body" style="height: 320px;">
+      <div class="mockup-content">
+        <div class="mockup-header">
+          <div class="breadcrumb">
+            <span>修真世界之万界仙途</span>
+            <span class="sep">/</span>
+            <span style="color:var(--foreground);font-weight:500;">会话</span>
+          </div>
+          <div class="actions">
+            <div class="action-btn">📋</div>
+            <div class="action-btn">🔍</div>
+          </div>
+        </div>
+        <div class="chat-messages">
+          <div class="chat-msg assistant">
+            <div class="avatar">✦</div>
+            <div class="bubble">第 23 章已生成完毕。本章主角突破至元婴期，建议在下一章引入新的宗门竞争线。</div>
+          </div>
+          <div class="chat-msg user">
+            <div class="avatar">我</div>
+            <div class="bubble">好的，写下一章吧。加入一个神秘长老的角色。</div>
+          </div>
+          <div class="chat-msg assistant">
+            <div class="avatar">✦</div>
+            <div class="bubble">正在写作中... <br><span style="opacity:0.6;font-size:0.75rem;">工具：sub_agent(writer) → 正在生成正文</span></div>
+          </div>
+        </div>
+        <div class="chat-input-area">
+          <!-- Quick Actions as inline pills -->
+          <div class="chat-quick-actions" style="max-width:700px;margin:0 auto 10px;">
+            <div class="quick-action-chip">⚡ 写下一章</div>
+            <div class="quick-action-chip">🔍 审计</div>
+            <div class="quick-action-chip">📄 导出全书</div>
+            <div class="quick-action-chip">📈 扫描市场</div>
+          </div>
+
+          <div class="new-input-area">
+            <div class="new-input-container">
+              <div class="new-input-top">
+                <textarea class="textarea" rows="1" placeholder="输入指令或消息...">加入神秘长老的竞争线</textarea>
+                <div class="new-send-btn">↑</div>
+              </div>
+              <div class="new-input-bottom">
+                <div class="new-model-badge">
+                  <span>Claude Sonnet 4.6</span>
+                  <span class="chevron">▾</span>
+                </div>
+                <div class="new-helpers">
+                  <div class="helper-btn" title="自动配图">🎨</div>
+                  <div class="helper-btn" title="附件">📎</div>
+                  <div class="helper-btn" title="更多">⋯</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="suggestions">
+    <div class="suggestion-card">
+      <span class="number">设计要点</span>
+      <h4>快捷操作从独立条变为内联胶囊</h4>
+      <p>QuickActions 不再占据整行独立区域，而是作为输入框上方的内联胶囊组。它们始终可见但不抢占垂直空间。点击后直接发送，无需二次确认。</p>
+    </div>
+    <div class="suggestion-card">
+      <span class="number">设计要点</span>
+      <h4>模型选择器缩小为底部标签</h4>
+      <p>模型选择从一个大下拉菜单缩小为一个紧凑的标签（"Claude Sonnet 4.6 ▾"），放在输入框左下角。点击展开搜索面板。不再在输入区底部占据显著位置。</p>
+    </div>
+    <div class="suggestion-card">
+      <span class="number">设计要点</span>
+      <h4>辅助功能图标移至右下角</h4>
+      <p>自动配图、附件等辅助功能以小图标形式放在输入框右下角。Play 模式的"查看世界"按钮仅在 Play 模式下显示在右上角，平时隐藏。</p>
+    </div>
+  </div>
+
+  <!-- 2.4 TUI 改进 -->
+  <h3>2.4 TUI 终端界面：对比度增强 + 符号区分</h3>
+
+  <div class="compare-grid">
+    <div class="compare-panel">
+      <div class="compare-panel-header before">当前</div>
+      <div class="compare-panel-body before-panel">
+        <ul>
+          <li>强调色 #c88a56 对比度偏低</li>
+          <li>消息类型仅靠颜色区分</li>
+          <li>无明确的快捷键提示</li>
+          <li>slash 命令面板占用输入区空间</li>
+          <li>执行状态仅靠文字描述</li>
+        </ul>
+      </div>
+    </div>
+    <div class="compare-panel">
+      <div class="compare-panel-header after">新设计</div>
+      <div class="compare-panel-body after-panel">
+        <ul>
+          <li>提高强调色亮度至 #db9f6a</li>
+          <li>消息类型用前缀符号区分（│ / ◆ / ·）</li>
+          <li>输入框底部显示快捷键提示</li>
+          <li>slash 命令面板浮动在输入框上方</li>
+          <li>执行状态用 ANSI 动画进度条</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- TUI Mockup -->
+  <div class="tui-mockup">
+    <div class="tui-header">
+      <span class="tui-accent">◆</span> InkOS Studio — 修真世界之万界仙途<br>
+      <span class="tui-border">────────────────────────────────────</span>
+    </div>
+
+    <div style="margin-top:8px;">
+      <div style="margin-bottom:4px;">
+        <span class="tui-border" style="font-weight:bold;">│</span> <span class="tui-user">第 23 章已生成。建议引入新宗门竞争线。</span>
+      </div>
+      <div style="margin-bottom:4px;">
+        <span class="tui-border" style="font-weight:bold;">│</span> <span class="tui-user">写下一章，加入神秘长老。</span>
+      </div>
+      <div style="margin-bottom:4px;">
+        <span class="tui-accent" style="font-weight:bold;">◆</span> <span style="color:#f0e6d8;">正在写作中...</span>
+      </div>
+      <div style="margin-bottom:4px;">
+        <span class="tui-accent" style="font-weight:bold;">◆</span> <span style="color:#f0e6d8;">✎ 第 24 章 · 长老现身</span>
+      </div>
+      <div style="margin-bottom:4px;">
+        <span class="tui-accent" style="font-weight:bold;">◆</span> <span style="color:#f0e6d8;">[writer] 正在生成正文... ████████░░ 80%</span>
+      </div>
+    </div>
+
+    <div class="tui-composer-box">
+      <div>
+        <span class="tui-accent" style="font-weight:bold;">› </span>
+        <span style="color:#f0e6d8;">扫描市场趋势</span><span class="tui-cursor">█</span>
+      </div>
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #6b6156;">
+        <span class="tui-accent">› </span> <span style="color:#c88a56;font-weight:bold;">/short</span> <span class="tui-border">— 短篇小说</span><br>
+        <span class="tui-accent">  </span> <span>/play</span> <span class="tui-border">— 开放世界</span><br>
+        <span class="tui-accent">  </span> <span>/audit</span> <span class="tui-border">— 审计全书</span>
+      </div>
+    </div>
+
+    <div style="margin-top:8px;">
+      <span style="color:#7ec87e;font-weight:bold;">✓</span> <span style="color:#7ec87e;">已完成</span>
+      <span style="margin-left:12px;color:#8f8374;">Tab 补全 · ↑↓ 历史 · Esc 退出</span>
+    </div>
+  </div>
+
+  <!-- 2.5 对比总结 -->
+  <h3>2.5 改动对比总结</h3>
+
+  <table class="comparison-table">
+    <thead>
+      <tr>
+        <th>方面</th>
+        <th>当前</th>
+        <th>改进后</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>侧边栏宽度</strong></td>
+        <td class="current">260px（固定）</td>
+        <td class="proposed">64px（图标栏）</td>
+      </tr>
+      <tr>
+        <td><strong>创作入口</strong></td>
+        <td class="current">侧边栏顶部 2×4 网格，8 个按钮</td>
+        <td class="proposed">仪表盘内 4 个卡片 + "更多"折叠</td>
+      </tr>
+      <tr>
+        <td><strong>书籍列表</strong></td>
+        <td class="current">侧边栏嵌套展开（书→会话）</td>
+        <td class="proposed">仪表盘内卡片列表 + 进度条</td>
+      </tr>
+      <tr>
+        <td><strong>会话管理</strong></td>
+        <td class="current">侧边栏底部，3 级嵌套</td>
+        <td class="proposed">Chat 页顶部下拉切换</td>
+      </tr>
+      <tr>
+        <td><strong>快捷操作</strong></td>
+        <td class="current">输入区上方独立条（占整行）</td>
+        <td class="proposed">输入框上方内联胶囊</td>
+      </tr>
+      <tr>
+        <td><strong>模型选择器</strong></td>
+        <td class="current">输入框下方大下拉（含搜索框）</td>
+        <td class="proposed">输入框左下角紧凑标签</td>
+      </tr>
+      <tr>
+        <td><strong>配图控制</strong></td>
+        <td class="current">浮动菜单，2 次点击</td>
+        <td class="proposed">输入框右下角图标按钮</td>
+      </tr>
+      <tr>
+        <td><strong>TUI 对比度</strong></td>
+        <td class="current">#c88a56 强调色</td>
+        <td class="proposed">#db9f6a（提高亮度）</td>
+      </tr>
+      <tr>
+        <td><strong>TUI 消息区分</strong></td>
+        <td class="current">仅靠颜色</td>
+        <td class="proposed">颜色 + 前缀符号（│/◆/·）</td>
+      </tr>
+    </tbody>
+  </table>
+
+</div>
+
+<!-- ===== Part 3: 实施建议 ===== -->
+<div class="section">
+  <h2>三、实施建议 — 分阶段渐进迁移</h2>
+
+  <div class="suggestions">
+    <div class="suggestion-card">
+      <span class="number">第一阶段</span>
+      <h4>收缩侧边栏（2-3 天）</h4>
+      <p>将 Sidebar.tsx 从 260px 缩减为 64px 图标栏。所有文字标签和二级内容（书籍列表、会话历史）移出侧边栏。保留完整的点击导航功能，通过 tooltip 提示名称。这一步改动最小、收益最大，用户立刻感受到清爽。</p>
+    </div>
+    <div class="suggestion-card">
+      <span class="number">第二阶段</span>
+      <h4>重构仪表盘（3-4 天）</h4>
+      <p>重新设计 Dashboard.tsx：4 个创作卡片 + 书籍卡片增强（封面、进度条、状态标签）。将 Manuscript Foundry 面板改为条件渲染。这一步完成后，新用户引导和日常操作都会更顺畅。</p>
+    </div>
+    <div class="suggestion-card">
+      <span class="number">第三阶段</span>
+      <h4>简化输入区（2-3 天）</h4>
+      <p>重构 ChatPage.tsx 底部的输入区：快捷操作改为内联胶囊、模型选择器缩小为标签、辅助功能图标移至右下角。保持所有现有功能不变，只是重新排列布局。</p>
+    </div>
+    <div class="suggestion-card">
+      <span class="number">第四阶段</span>
+      <h4>TUI 微调（1-2 天）</h4>
+      <p>调整 theme.ts 的配色方案提高对比度，在 dashboard.tsx 的消息渲染中增强符号区分，在输入框底部添加快捷键提示。</p>
+    </div>
+  </div>
+
+</div>
+
+</div>
+
+</body>
+</html>

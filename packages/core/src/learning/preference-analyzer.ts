@@ -46,7 +46,12 @@ export class PreferenceAnalyzer {
   private analyzeStyle(edits: UserEdit[]): StylePreference {
     let formality = 0.5;
     let literaryLevel = 0.5;
-    let humor = 0.5;
+
+    // 各维度关键词定义
+    const humorKeywords = ["哈哈", "笑了", "调侃", "滑稽", "有趣", "好笑", "苦笑", "自嘲"];
+    const darknessKeywords = ["血", "死", "尸体", "黑暗", "恐惧", "绝望", "残忍", "阴沉", "冰冷"];
+    const romanceKeywords = ["爱", "喜欢", "心动", "吻", "拥抱", "温柔", "暧昧", "脸红"];
+    const actionKeywords = ["打", "冲", "劈", "射", "踢", "撞", "挥", "斩", "爆"];
 
     for (const edit of edits) {
       // 润色操作 = 提升文学性
@@ -80,13 +85,20 @@ export class PreferenceAnalyzer {
       }
     }
 
+    // 合并所有编辑后文本，计算各维度关键词密度
+    const combinedEditedText = edits.map((e) => e.editedText).join("");
+    const humor = this.calculateKeywordDensity(combinedEditedText, humorKeywords);
+    const darkness = this.calculateKeywordDensity(combinedEditedText, darknessKeywords);
+    const romance = this.calculateKeywordDensity(combinedEditedText, romanceKeywords);
+    const action = this.calculateKeywordDensity(combinedEditedText, actionKeywords);
+
     return {
       formality: this.clamp(formality),
       literaryLevel: this.clamp(literaryLevel),
       humor: this.clamp(humor),
-      darkness: 0.5,
-      romance: 0.5,
-      action: 0.5,
+      darkness: this.clamp(darkness),
+      romance: this.clamp(romance),
+      action: this.clamp(action),
     };
   }
 
@@ -116,11 +128,32 @@ export class PreferenceAnalyzer {
 
     const avgLengthChange = count > 0 ? totalLengthChange / count : 0;
 
+    // 合并所有编辑后文本，计算长句比例和段落长度
+    const combinedEditedText = edits.map((e) => e.editedText).join("\n\n");
+
+    // 长句比例：按 [。！？；\n] 分句，统计 >40 字句子的比例
+    const allSentences = combinedEditedText
+      .split(/[。！？；\n]/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    const longSentenceCount = allSentences.filter((s) => s.length > 40).length;
+    const longSentenceRatio =
+      allSentences.length > 0 ? longSentenceCount / allSentences.length : 0;
+
+    // 段落长度：按 \n\n+ 分段，统计平均段落字数
+    const paragraphs = combinedEditedText
+      .split(/\n\n+/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+    const totalParagraphChars = paragraphs.reduce((sum, p) => sum + p.length, 0);
+    const paragraphLength =
+      paragraphs.length > 0 ? totalParagraphChars / paragraphs.length : 0;
+
     return {
       avgLength: Math.max(10, 25 - avgLengthChange),
       shortSentenceRatio: this.clamp(0.3 + shortSentencePreference),
-      longSentenceRatio: 0.2,
-      paragraphLength: 100,
+      longSentenceRatio: this.clamp(longSentenceRatio),
+      paragraphLength: Math.round(paragraphLength),
       useExclamation: 0.3,
       useEllipsis: 0.2,
     };
@@ -155,7 +188,7 @@ export class PreferenceAnalyzer {
     return {
       preferredWords: this.sortAndLimit(preferredWords, 20),
       avoidedWords: this.sortAndLimit(avoidedWords, 20),
-      wordPairs: [],
+      wordPairs: this.extractWordPairs(edits),
     };
   }
 
@@ -314,5 +347,53 @@ export class PreferenceAnalyzer {
 
   private clamp(value: number): number {
     return Math.max(0, Math.min(1, value));
+  }
+
+  /**
+   * 计算关键词密度分数
+   * 每千字 1 次出现映射到 0.1，结果 clamp 到 [0, 1]
+   */
+  private calculateKeywordDensity(text: string, keywords: string[]): number {
+    if (text.length === 0) return 0;
+    let count = 0;
+    for (const keyword of keywords) {
+      // 统计每个关键词在文本中出现的次数
+      let idx = 0;
+      while ((idx = text.indexOf(keyword, idx)) !== -1) {
+        count++;
+        idx += keyword.length;
+      }
+    }
+    // 每千字 1 次映射到 0.1
+    const density = (count * 1000) / text.length * 0.1;
+    return this.clamp(density);
+  }
+
+  /**
+   * 提取双字词组
+   * 对每个编辑的 editedText 用 2 字滑窗提取所有双字词组，
+   * 统计频率取 top-10，过滤掉包含标点/空格的词组
+   */
+  private extractWordPairs(edits: UserEdit[]): string[][] {
+    const pairFreq = new Map<string, number>();
+    // 标点与空白字符，用于过滤
+    const invalidChar = /[，。！？；：、""''「」（）()【】《》\s,.\!?;:\-—…]/;
+
+    for (const edit of edits) {
+      const text = edit.editedText;
+      // 用 2 字滑窗提取所有双字词组
+      for (let i = 0; i < text.length - 1; i++) {
+        const pair = text.substring(i, i + 2);
+        // 过滤掉包含标点/空格的词组
+        if (invalidChar.test(pair)) continue;
+        pairFreq.set(pair, (pairFreq.get(pair) || 0) + 1);
+      }
+    }
+
+    // 按频率排序，取 top-10
+    return Array.from(pairFreq.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([pair]) => [pair, "positive"]);
   }
 }

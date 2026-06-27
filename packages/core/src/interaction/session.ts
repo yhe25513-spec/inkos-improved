@@ -101,6 +101,7 @@ export const InteractionSessionSchema = z.object({
   events: z.array(InteractionEventSchema).default([]),
   pendingDecision: PendingDecisionSchema.optional(),
   currentExecution: ExecutionStateSchema.optional(),
+  lastConsistencyResult: z.unknown().optional(),
 });
 
 export type InteractionSession = z.infer<typeof InteractionSessionSchema>;

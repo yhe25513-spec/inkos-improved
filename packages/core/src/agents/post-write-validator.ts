@@ -22,7 +22,7 @@ export function normalizePostWriteSurface(
 ): string {
   let normalized = stripPostWriteMetaLines(content);
   if (languageOverride !== "en") {
-    normalized = normalized.replace(/——+/g, "，");
+    normalized = normalized.replace(/—+/g, "，");
   }
   return normalized.trimEnd();
 }
@@ -45,6 +45,17 @@ interface ParagraphShape {
   readonly maxConsecutiveShort: number;
 }
 
+/** 句子级节奏分析结果 */
+interface SentenceRhythm {
+  readonly sentences: ReadonlyArray<string>;
+  readonly sentenceLengths: ReadonlyArray<number>;
+  readonly averageLength: number;
+  readonly stdDev: number;
+  readonly monotonousRuns: ReadonlyArray<{ readonly start: number; readonly length: number }>;
+  readonly shortBombSentences: number;
+  readonly shortBombLocations: ReadonlyArray<number>;
+}
+
 // --- Marker word lists ---
 
 /** AI转折/惊讶标记词 */
@@ -58,6 +69,45 @@ const META_NARRATION_PATTERNS = [
   /(?:故事|剧情)(?:发展)?到了/,
   /读者[，,]?(?:可能|应该|也许)/,
   /我们[，,]?(?:可以|不妨|来看)/,
+];
+
+/** 整段 exposition / 信息揭示模式（禁止作为独立段落出现） */
+const EXPOSITION_PATTERNS_ZH = [
+  /** 以"这是一个……的世界/大陆/国家/时代/体系"开头的整段介绍 */
+  /^这是一个[\u4e00-\u9fa5]{2,20}的(?:世界|大陆|国家|时代|体系|社会|星球)\b/,
+  /^这个(?:世界|大陆|国家|时代|体系)上[，,]?\s*[\u4e00-\u9fa5]/,
+  /^在这个(?:世界|大陆|国家|时代|体系)里[，,]?\s*[\u4e00-\u9fa5]/,
+  /** 以"故事发生在…"开头的时代背景介绍 */
+  /^故事发生在[一二三四五六七八九零〇0-9]+百?[年前后]?[\u4e00-\u9fa5]/,
+  /** 以"话说/话说当年/从前"开头的背景叙述 */
+  /^话说(?:当年|从前|古时候|很久以前)[，,]?\s*[\u4e00-\u9fa5]/,
+  /** 以"该/这个/那个+组织/家族/门派/公司/教会"开头的建制介绍 */
+  /^(?:这个|那个|该)(?:组织|家族|门派|公司|教会|帝国|王朝)\s*(?:建立于|成立于|创立于|创建于)/,
+  /** 以"这个大陆上存在…" / "这里有N种…" 形式开头的体系说明 */
+  /^这个(?:大陆|世界|星球)上[，,]?存在/,
+  /^这里[，,]?(?:有|存在|分布着)/,
+];
+
+/** 空洞形容词模式（中文）："他/她/它很+形容词" */
+const ABSTRACT_ADJECTIVE_PATTERNS_ZH = [
+  /(?:他|她|它|他们|她们)\s*[很非常极其十分特别格外相当异常无比分外]\s*(?:紧张|愤怒|悲伤|高兴|兴奋|震惊|难过|高兴|美丽|漂亮|帅气|重要|关键|危险|安全|安静|热闹|古老|崭新|豪华|简陋|干净|脏乱|强大|弱小|聪明|愚蠢|善良|邪恶|热情|冷漠|勇敢|懦弱|神秘|普通|独特|奇怪|正常|异常|真实|虚假|真诚|虚伪|满意|失望|满足|疲惫|精神|放松|紧张|轻松|沉重|轻快|温暖|寒冷|凉爽|炎热)/,
+];
+
+/** 整段 exposition 模式（英文） */
+const EXPOSITION_PATTERNS_EN = [
+  /^This is a (?:world|continent|kingdom|country|empire|era|age|system|society) of\b/i,
+  /^In this (?:world|continent|kingdom|country|empire|era|age|system)\b/i,
+  /^This (?:world|continent|kingdom|country|empire) (?:has|had|is|was)\b/i,
+  /^The story takes place \d+ years?(?: ago| later| after| before)?\b/i,
+  /^Once upon a time[，,]?\s*(?:in|on|at)\b/i,
+  /^The (?:kingdom|empire|nation|society|world) (?:was|is|had been) (?:founded|established|built|created)\b/i,
+  /^There (?:were|was|are|is) (?:three|four|five|many|several)\b.*(?:(?:systems|types|classes|factions|sects|clans)\b)/i,
+];
+
+/** 空洞形容词模式（英文）："He/She was very ADJECTIVE" */
+const ABSTRACT_ADJECTIVE_PATTERNS_EN = [
+  /\b(?:he|she|it|they|this|that)\s+(?:was|were|is|are|felt|seemed|looked)\s+(?:very|extremely|incredibly|remarkably|unusually|particularly|especially|surprisingly|truly|really|quite|rather|fairly|pretty|so|too)\s+(?:nervous|angry|sad|happy|excited|shocked|beautiful|pretty|handsome|important|crucial|dangerous|safe|quiet|loud|old|new|ancient|modern|huge|tiny|big|small|smart|stupid|kind|evil|warm|cold|brave|cowardly|mysterious|ordinary|unique|strange|normal|real|fake|genuine|false|sincere|honest|satisfied|disappointed|tired|exhausted|relaxed|tense|calm|heavy|light)\b/i,
+  /\b(?:he|she|it)\s+(?:was|were|is|are)\s+(?:nervous|angry|sad|happy|excited|shocked|beautiful|pretty|handsome|important|dangerous|safe|quiet|loud|old|new|huge|tiny|big|small|smart|stupid|kind|evil|warm|cold|brave|mysterious|ordinary|unique)\b/i,
 ];
 
 /** 分析报告式术语（禁止出现在正文中） */
@@ -103,12 +153,12 @@ export function validatePostWrite(
     });
   }
 
-  // 2. 硬性禁令: 破折号
-  if (content.includes("——")) {
+  // 2. 硬性禁令: 破折号 (check single em-dash too, in case validate runs on un-normalized text)
+  if (content.includes("—")) {
     violations.push({
       rule: "禁止破折号",
       severity: "error",
-      description: "出现了破折号「——」",
+      description: "出现了破折号「—」",
       suggestion: "用逗号或句号断句",
     });
   }
@@ -164,6 +214,36 @@ export function validatePostWrite(
         severity: "warning",
         description: `出现编剧旁白式表述："${match[0]}"`,
         suggestion: "删除元叙事，让剧情自然展开",
+      });
+      break; // 报一次即可
+    }
+  }
+
+  // 5.1. 整段 exposition / 信息揭示检查（【信息揭示铁律】）
+  // 检测以"这是一个……的世界"/"故事发生在…"等开头的独立段落
+  for (const pattern of EXPOSITION_PATTERNS_ZH) {
+    const match = content.match(pattern);
+    if (match) {
+      violations.push({
+        rule: "信息揭示铁律",
+        severity: "error",
+        description: `出现禁止的整段背景介绍模式："${match[0]}"。世界观/设定/背景信息必须附着在动作或对话上，禁止整段 exposition。`,
+        suggestion: `删掉这段，把信息附着到具体动作或角色对话上。例如把"这是一个…的世界"改成角色在具体场景里通过动作/对话/反应自然带出。`,
+      });
+      break; // 报一次即可
+    }
+  }
+
+  // 5.2. 空洞形容词检查（【具体化 vs 抽象描述】）
+  // 检测"他很紧张"/"她很漂亮"等空洞形容词，提示用具体动作替换
+  for (const pattern of ABSTRACT_ADJECTIVE_PATTERNS_ZH) {
+    const match = content.match(pattern);
+    if (match) {
+      violations.push({
+        rule: "空洞形容词",
+        severity: "warning",
+        description: `出现空洞的描述性形容词："${match[0]}"。建议追问：这个形容词换成一句具体的画面或动作，读者会不会更有感觉？`,
+        suggestion: `参考改写方向："他很紧张"→"他的指节在方向盘上叩了七次"；"她很漂亮"→"两个男人同时回头看她"；"这很重要"→给出具体物件或数字。`,
       });
       break; // 报一次即可
     }
@@ -274,6 +354,34 @@ export function validatePostWrite(
   }
 
   violations.push(...detectParagraphShapeWarnings(content, "zh"));
+
+  // 10.5. 句子级节奏检测（长短句交替 / 短句子炸弹）
+  const rhythm = analyzeSentenceRhythm(content, "zh");
+  // 节奏太平：stdDev < 平均长度的 40% 且有 ≥8 句的 monotonous run（落在 ±30% 范围内）
+  const rhythmThreshold = rhythm.averageLength * 0.4;
+  if (rhythm.averageLength > 0 && rhythm.stdDev < rhythmThreshold && rhythm.monotonousRuns.length > 0) {
+    const longestRun = rhythm.monotonousRuns.reduce(
+      (max, r) => (r.length > max.length ? r : max),
+      rhythm.monotonousRuns[0]!,
+    );
+    if (longestRun.length >= 8) {
+      violations.push({
+        rule: "句子节奏太平",
+        severity: "warning",
+        description: `检测到${longestRun.length}句连续落在[${Math.round(rhythm.averageLength * 0.7)}, ${Math.round(rhythm.averageLength * 1.3)}]字的窄带内，像节拍器一样机械。句子长度标准差仅${rhythm.stdDev.toFixed(1)}（均值${rhythm.averageLength.toFixed(1)}）。`,
+        suggestion: "故意打破均匀节奏：插入一句≤15字的短句子炸弹，或写一句≥40字的长句把节奏拉开。",
+      });
+    }
+  }
+  // 1000字以上但零个独立成段的短句子（≤15字）
+  if (content.length >= 1000 && rhythm.shortBombSentences === 0) {
+    violations.push({
+      rule: "缺少短句子炸弹",
+      severity: "warning",
+      description: `本章${content.length}字但没有一个≤15字的独立成段的短句。每500字应有一个短句子独立成段，给读者一个重击/停顿。`,
+      suggestion: '在情绪高点或转折处，故意写一句≤15字的短句独立成段。例如："桌。"、"他停住了。"、"是陷阱。"',
+    });
+  }
 
   // 11. Book-level prohibitions
   // Short prohibitions (2-30 chars): exact substring match
@@ -477,6 +585,34 @@ function validatePostWriteEnglish(
     }
   }
 
+  // 1.1. English EXPOSITION check (Information Reveal — HARD RULES)
+  for (const pattern of EXPOSITION_PATTERNS_EN) {
+    const match = content.match(pattern);
+    if (match) {
+      violations.push({
+        rule: "Information Reveal — HARD RULE",
+        severity: "error",
+        description: `Prohibited exposition opener found: "${match[0]}". Any worldbuilding / lore / backstory must ride on a specific action, line of dialogue, or object.`,
+        suggestion: `Rewrite: attach the information to a character's action, line of dialogue, or observable object — not a standalone background paragraph.`,
+      });
+      break;
+    }
+  }
+
+  // 1.2. English abstract adjective check (Concrete over Abstract)
+  for (const pattern of ABSTRACT_ADJECTIVE_PATTERNS_EN) {
+    const match = content.match(pattern);
+    if (match) {
+      violations.push({
+        rule: "Concrete over Abstract",
+        severity: "warning",
+        description: `Bare abstract adjective found: "${match[0]}". Replace with a concrete action, object, or observable detail.`,
+        suggestion: `"He was very nervous" → "He tapped the steering wheel seven times." / "She was very beautiful" → "Two guys at the bar both looked up as she walked in."`,
+      });
+      break;
+    }
+  }
+
   // 2. Paragraph overflow (same rule applies to English)
   const paragraphs = content.split(/\n\s*\n/).filter((p) => p.trim().length > 0);
   const longParagraphs = paragraphs.filter((p) => p.length > 500);
@@ -490,6 +626,34 @@ function validatePostWriteEnglish(
   }
 
   violations.push(...detectParagraphShapeWarnings(content, "en"));
+
+  // 2.2. Sentence-level rhythm (mix short and long, short-bomb sentences)
+  const rhythm = analyzeSentenceRhythm(content, "en");
+  // Mechanical cadence: stdDev < 40% of average and ≥8 sentences in ±30% band
+  const enRhythmThreshold = rhythm.averageLength * 0.4;
+  if (rhythm.averageLength > 0 && rhythm.stdDev < enRhythmThreshold && rhythm.monotonousRuns.length > 0) {
+    const longestRun = rhythm.monotonousRuns.reduce(
+      (max, r) => (r.length > max.length ? r : max),
+      rhythm.monotonousRuns[0]!,
+    );
+    if (longestRun.length >= 8) {
+      violations.push({
+        rule: "Sentence rhythm",
+        severity: "warning",
+        description: `${longestRun.length} consecutive sentences fall within [${Math.round(rhythm.averageLength * 0.7)}, ${Math.round(rhythm.averageLength * 1.3)}] words — mechanical cadence. Standard deviation: ${rhythm.stdDev.toFixed(1)} (mean ${rhythm.averageLength.toFixed(1)}).`,
+        suggestion: "Break the rhythm: insert a ≤6-word short-bomb sentence, or write a ≥20-word long sentence.",
+      });
+    }
+  }
+  // 1000+ chars but zero short-bomb sentences
+  if (content.length >= 1000 && rhythm.shortBombSentences === 0) {
+    violations.push({
+      rule: "Short-bomb sentence",
+      severity: "warning",
+      description: `${content.length} characters but zero ≤6-word short-bomb sentences. Every ~500 words, drop one ultra-short sentence as a standalone paragraph.`,
+      suggestion: "Add a short-bomb at an emotional peak or turn: e.g., 'Trap.' 'He stopped.' 'Silence.'",
+    });
+  }
 
   // 2.5. Multi-character scene with almost no direct exchange
   const quotedLines = content.match(/"[^"]+"/g) ?? [];
@@ -637,6 +801,105 @@ function extractParagraphs(content: string): string[] {
     .filter((paragraph) => paragraph.length > 0)
     .filter((paragraph) => paragraph !== "---")
     .filter((paragraph) => !paragraph.startsWith("#"));
+}
+
+/**
+ * Analyze sentence-level rhythm.
+ * Detects mechanical cadence (monotonous runs) and short-bomb sentences.
+ */
+function analyzeSentenceRhythm(content: string, language: "zh" | "en"): SentenceRhythm {
+  // Split into sentences
+  const sentences: string[] = [];
+  if (language === "zh") {
+    // Chinese: split by 。！？； and also by .!? followed by space/end (for mixed content)
+    const parts = content.split(/[。！？；]|\.(?=\s|$)|!(?=\s|$)|\?(?=\s|$)/);
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.length > 0) {
+        sentences.push(trimmed);
+      }
+    }
+  } else {
+    // English: split by .!? or double newline
+    const parts = content.split(/[.!?]|\n\n/);
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (trimmed.length > 0) {
+        sentences.push(trimmed);
+      }
+    }
+  }
+
+  // Calculate sentence lengths (words for English, chars for Chinese)
+  const sentenceLengths: number[] = sentences.map((s) =>
+    language === "en" ? s.split(/\s+/).filter((w) => w.length > 0).length : s.length
+  );
+
+  if (sentenceLengths.length === 0) {
+    return {
+      sentences: [],
+      sentenceLengths: [],
+      averageLength: 0,
+      stdDev: 0,
+      monotonousRuns: [],
+      shortBombSentences: 0,
+      shortBombLocations: [],
+    };
+  }
+
+  // Calculate average and standard deviation
+  const averageLength = sentenceLengths.reduce((sum, len) => sum + len, 0) / sentenceLengths.length;
+  const variance =
+    sentenceLengths.reduce((sum, len) => sum + (len - averageLength) ** 2, 0) / sentenceLengths.length;
+  const stdDev = Math.sqrt(variance);
+
+  // Find monotonous runs: 8+ consecutive sentences within [mean*0.7, mean*1.3] band
+  const monotonousRuns: { start: number; length: number }[] = [];
+  const narrowBandMin = averageLength * 0.7;
+  const narrowBandMax = averageLength * 1.3;
+  let currentRunStart = -1;
+  let currentRunLength = 0;
+
+  for (let i = 0; i < sentenceLengths.length; i++) {
+    const len = sentenceLengths[i];
+    if (len >= narrowBandMin && len <= narrowBandMax) {
+      if (currentRunStart === -1) {
+        currentRunStart = i;
+        currentRunLength = 1;
+      } else {
+        currentRunLength++;
+      }
+    } else {
+      if (currentRunLength >= 8) {
+        monotonousRuns.push({ start: currentRunStart, length: currentRunLength });
+      }
+      currentRunStart = -1;
+      currentRunLength = 0;
+    }
+  }
+  // Check final run
+  if (currentRunLength >= 8) {
+    monotonousRuns.push({ start: currentRunStart, length: currentRunLength });
+  }
+
+  // Find short-bomb sentences: ≤15 chars (Chinese) or ≤6 words (English)
+  const shortBombThreshold = language === "en" ? 6 : 15;
+  const shortBombLocations: number[] = [];
+  for (let i = 0; i < sentenceLengths.length; i++) {
+    if (sentenceLengths[i] <= shortBombThreshold) {
+      shortBombLocations.push(i);
+    }
+  }
+
+  return {
+    sentences,
+    sentenceLengths,
+    averageLength,
+    stdDev,
+    monotonousRuns,
+    shortBombSentences: shortBombLocations.length,
+    shortBombLocations,
+  };
 }
 
 const ENGLISH_NAME_STOP_WORDS = new Set([

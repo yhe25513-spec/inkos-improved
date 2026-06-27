@@ -5,6 +5,7 @@ import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
 import { useColors } from "../hooks/use-colors";
 import { deriveBookActivity, shouldRefetchBookView } from "../hooks/use-book-activity";
+import { AgentPipelinePanel, usePipelineState } from "../components/chat/AgentPipelinePanel";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   ChevronLeft,
@@ -120,6 +121,7 @@ export function BookDetail({
       .catch(() => undefined);
   }, []);
   const activity = useMemo(() => deriveBookActivity(sse.messages, bookId), [bookId, sse.messages]);
+  const pipeline = usePipelineState(sse.messages, t("nav.connected") === "已连接");
   const writing = writeRequestPending || activity.writing;
   const drafting = draftRequestPending || activity.drafting;
   const latestPersistedChapter = data ? data.nextChapter - 1 : 0;
@@ -536,7 +538,14 @@ export function BookDetail({
         </div>
       )}
 
-      {/* Tool Strip */}
+      {/* Agent Pipeline execution panel */}
+      {pipeline && pipeline.stages.some((s) => s.status === "active" || s.status === "pending") && (
+        <div className="mb-4">
+          <AgentPipelinePanel pipeline={pipeline} isZh={t("nav.connected") === "已连接"} />
+        </div>
+      )}
+
+      {/* Tool Strip — Quick Actions */}
       <div className="flex flex-wrap items-center gap-2 py-1">
           {reviewCount > 0 && (
             <button

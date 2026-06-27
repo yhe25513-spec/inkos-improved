@@ -8,6 +8,7 @@ import type { DetectionHistoryEntry } from "../models/detection.js";
 import type { AgentContext } from "../agents/base.js";
 import { detectAIContent, type DetectionResult } from "../agents/detector.js";
 import { ReviserAgent } from "../agents/reviser.js";
+import { PerplexityAnalyzer } from "../anti-ai/perplexity-analyzer.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -54,7 +55,14 @@ export async function detectAndRewrite(
 ): Promise<DetectAndRewriteResult> {
   const maxRetries = config.maxRetries;
 
+  // Phase 5.4: 本地困惑度分析器（纯程序化，无 LLM），用于与外部检测分数对比
+  const perplexityAnalyzer = new PerplexityAnalyzer();
+
   let currentContent = content;
+
+  // 本地 perplexity 预分析（首次检测前）
+  logLocalPerplexity(ctx, perplexityAnalyzer, currentContent, chapterNumber, 0);
+
   const firstDetection = await detectAIContent(config, currentContent);
   const originalScore = firstDetection.score;
 
@@ -102,9 +110,17 @@ export async function detectAndRewrite(
     if (reviseOutput.revisedContent.length === 0) break;
     currentContent = reviseOutput.revisedContent;
 
+    // 本地 perplexity 预分析（重检测前）
+    logLocalPerplexity(ctx, perplexityAnalyzer, currentContent, chapterNumber, attempts);
+
     // Re-detect
     const reDetection = await detectAIContent(config, currentContent);
     finalScore = reDetection.score;
+
+    // 记录本地与外部检测分数对比
+    ctx.logger?.info(
+      `[detection] chapter ${chapterNumber} attempt ${attempts} | external score=${finalScore.toFixed(2)} | threshold=${config.threshold}`,
+    );
 
     await recordHistory(bookDir, {
       chapterNumber,
@@ -126,6 +142,27 @@ export async function detectAndRewrite(
     passed: finalScore <= config.threshold,
     finalContent: currentContent,
   };
+}
+
+/**
+ * 运行本地 perplexity 分析并记录日志，用于与外部检测分数对比。
+ * 纯程序化分析，失败只记录 debug 日志，不阻断检测流程。
+ */
+function logLocalPerplexity(
+  ctx: AgentContext,
+  analyzer: PerplexityAnalyzer,
+  content: string,
+  chapterNumber: number,
+  attempt: number,
+): void {
+  try {
+    const localAnalysis = analyzer.analyze(content);
+    ctx.logger?.info(
+      `[perplexity] chapter ${chapterNumber} attempt ${attempt} | local perplexity=${localAnalysis.perplexity.toFixed(2)} burstiness=${localAnalysis.burstiness.toFixed(2)} vocabDiversity=${localAnalysis.vocabularyDiversity.toFixed(2)} isAI=${localAnalysis.isAIGenerated} confidence=${localAnalysis.confidence.toFixed(2)}`,
+    );
+  } catch (e) {
+    ctx.logger?.debug(`[perplexity] local analysis failed: ${e}`);
+  }
 }
 
 /** Append an entry to detection_history.json. */

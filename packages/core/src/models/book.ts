@@ -65,6 +65,18 @@ export const BookConfigSchema = z.object({
   updatedAt: z.string().datetime(),
   parentBookId: z.string().optional(),
   fanficMode: FanficModeSchema.optional(),
+  // ── 系统开关（可选，缺省时按默认行为运行；默认值在使用处用 ?? 处理）──
+  enableAntiAI: z.boolean().optional(),
+  enableHumanity: z.boolean().optional(),
+  enableEmotion: z.boolean().optional(),
+  enableLearning: z.boolean().optional(),
+  // ── 质量门禁参数 ──
+  maxErrorsPerChapter: z.number().int().min(0).optional(),
+  maxReviewIterations: z.number().int().min(1).max(5).optional(),
+  // ── 真人感/去AI味强度 ──
+  humanizerIntensity: z.number().min(0).max(1).optional(),
+  // ── 小说样本目录（相对项目根，用于真人感画像初始化）──
+  humanitySamplesDir: z.string().optional(),
 });
 
 export type BookConfig = z.infer<typeof BookConfigSchema>;
