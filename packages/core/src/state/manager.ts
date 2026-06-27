@@ -298,9 +298,14 @@ export class StateManager {
     try {
       const raw = await readFile(indexPath, "utf-8");
       return JSON.parse(raw);
-    } catch (e) {
-      console.warn(`[inkos] ⚠️ 章节索引读取失败 (${bookId}): ${e}`);
-      return [];
+    } catch (e: any) {
+      // ENOENT: 文件不存在是正常情况（新书），返回空数组
+      if (e?.code === "ENOENT") {
+        return [];
+      }
+      // 其他错误（JSON 解析失败、权限问题等）：抛出异常，告知调用方索引损坏
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(`章节索引导入失败 (${bookId}): ${msg}\n文件路径: ${indexPath}\n建议: 检查 JSON 格式是否有效，或删除该文件让系统重建索引。`);
     }
   }
 

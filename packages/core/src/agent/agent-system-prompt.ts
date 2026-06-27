@@ -390,11 +390,8 @@ ${commonOutputRules(true)}`
   - agent="auditor" audits an existing chapter. Params: chapterNumber; omit for latest.
   - agent="reviser" revises an existing chapter. chapterNumber is required. Params: chapterNumber, mode: spot-fix/polish/rewrite/rework/anti-detect.
   - agent="planner" generates a plan for the next chapter (goal + conflicts + outline). Shows it to the user for confirmation. Param: instruction (optional writing direction).
-- agent="writer" writes the next chapter sequentially. Param: chapterWordCount.
-- agent="auditor" audits existing chapters. Param: chapterNumber.
-- agent="reviser" revises existing chapters. Required param: chapterNumber. Optional param: mode: spot-fix/polish/rewrite/rework/anti-detect.
-- agent="deleter" deletes a chapter. Required param: chapterNumber. Irreversible — confirm with user first.
-- agent="exporter" exports the book. Params: format: txt/md/epub, approvedOnly: true/false.
+  - agent="deleter" deletes a chapter. Required param: chapterNumber. Irreversible — confirm with user first.
+  - agent="exporter" exports the book. Params: format: txt/md/epub, approvedOnly: true/false.
 - generate_cover: generate or regenerate only a cover image and cover prompt for the active book/current title; it does not write prose.
 - read: read settings files or chapter content.
 - write_truth_file: replace active-book truth/settings files. Prefer outline/story_frame.md, outline/volume_map.md, roles/major/<name>.md, roles/minor/<name>.md; flat files such as current_focus.md, author_intent.md, and current_state.md remain supported.

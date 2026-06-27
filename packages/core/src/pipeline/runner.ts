@@ -947,6 +947,14 @@ export class PipelineRunner {
       this.logStage(stageLanguage, { zh: "创建初始快照", en: "creating initial snapshot" });
       await this.state.snapshotStateAt(stagingBookDir, 0);
 
+      // 检查推荐设定结构，缺失时给出提示
+      const rec = await this.state.checkRecommendedStructure(stagingBookDir);
+      if (rec.missingSettingFiles.length > 0) {
+        this.config.logger?.info(
+          `[initBook] 推荐创建以下设定文件（已存在于模板中，运行 /story-setup 自动部署）：\n  - ${rec.missingSettingFiles.join("\n  - ")}`,
+        );
+      }
+
       if (await this.pathExists(bookDir)) {
         if (await this.state.isCompleteBookDirectory(bookDir)) {
           throw new Error(`Book "${book.id}" already exists at books/${book.id}/. Use a different title or delete the existing book first.`);
@@ -1535,13 +1543,24 @@ export class PipelineRunner {
       // snapshot dir might not exist
     }
 
+    // 5. 清除 memory.db（可重建缓存，与 rollbackToChapter 策略一致）
+    try {
+      await Promise.all([
+        rm(join(storyDir, "memory.db"), { force: true }),
+        rm(join(storyDir, "memory.db-shm"), { force: true }),
+        rm(join(storyDir, "memory.db-wal"), { force: true }),
+      ]);
+    } catch {
+      // memory.db files might not exist
+    }
+
     return {
       bookId,
       chapterNumber,
       deletedFile,
       runtimeFilesDeleted,
       snapshotDeleted,
-      note: "章节文件、runtime 产物和快照已删除。entities.db 和 memory.db 中与该章节关联的数据未自动清理——如需完全清除，可运行 auditor 重建索引。",
+      note: "章节文件、runtime 产物、快照和 memory.db 缓存已清理。entities.db 中与该章节关联的实体数据已保留（关系图谱数据，下次写入时会自动更新）。",
     };
   }
 
